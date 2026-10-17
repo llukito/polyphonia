@@ -7,6 +7,7 @@
 pub mod envelope;
 pub mod error;
 pub mod payload;
+pub mod session;
 pub mod traits;
 pub mod types;
 
@@ -16,8 +17,9 @@ pub mod test_utils;
 pub use envelope::{Envelope, contact_id};
 pub use error::PolyError;
 pub use payload::{Payload, slot_pad, slot_unpad};
+pub use session::{SessionId, SessionKey, session_id};
 pub use traits::{Carrier, Cipher};
 pub use types::{
     Algorithm, CarrierKind, CarrierOptions, ContactId, Identity, OpenRequest, Opened, SealRequest,
-    Slot,
+    Sealed, Slot,
 };

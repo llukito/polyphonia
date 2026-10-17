@@ -13,6 +13,11 @@ pub const KEM_BLOCK_LEN_MLKEM768: usize = 1088;
 pub const KEM_BLOCK_LEN_RSA2048: usize = 256;
 /// The fake cipher has no KEM block.
 pub const KEM_BLOCK_LEN_FAKE: usize = 0;
+/// Session id length, the first part of a session message's payload for
+/// every algorithm (SPEC §3 "Session mode"; 64 bits, like contact_id).
+pub const SESSION_ID_LEN: usize = 8;
+/// Session key length: an HKDF-SHA256 output used as the slot keys' S (SPEC §3).
+pub const SESSION_KEY_LEN: usize = 32;
 
 /// AES-GCM standard nonce size (NIST SP 800-38D recommends 96 bits).
 pub const NONCE_LEN: usize = 12;
@@ -34,6 +39,8 @@ pub const SHARED_SECRET_LEN: usize = 32;
 /// HKDF info strings (SPEC §Key derivation).
 pub const HKDF_INFO_SLOT_A: &[u8] = b"polyphonia/v1/slot-a";
 pub const HKDF_INFO_SLOT_B: &[u8] = b"polyphonia/v1/slot-b";
+pub const HKDF_INFO_SESSION_KEY: &[u8] = b"polyphonia/v1/session-key";
+pub const HKDF_INFO_SESSION_ID: &[u8] = b"polyphonia/v1/session-id";
 
 impl Algorithm {
     /// Length of the KEM block this algorithm puts at the start of the payload.
@@ -46,11 +53,12 @@ impl Algorithm {
     }
 }
 
-/// KEM block length for an algorithm with these envelope flags
-/// (0 when the SESSION flag is set).
+/// Length of the payload's first part for an algorithm with these envelope
+/// flags: the KEM block, or the [`SESSION_ID_LEN`]-byte session id when the
+/// SESSION flag is set.
 pub fn kem_block_len(algorithm: Algorithm, flags: u8) -> usize {
     if flags & FLAG_SESSION != 0 {
-        0
+        SESSION_ID_LEN
     } else {
         algorithm.kem_block_len()
     }
@@ -240,7 +248,9 @@ mod tests {
         assert_eq!(Algorithm::MlKem768.kem_block_len(), 1088);
         assert_eq!(Algorithm::Rsa2048.kem_block_len(), 256);
         assert_eq!(Algorithm::Fake.kem_block_len(), 0);
-        assert_eq!(kem_block_len(Algorithm::MlKem768, FLAG_SESSION), 0);
+        for a in Algorithm::ALL {
+            assert_eq!(kem_block_len(a, FLAG_SESSION), SESSION_ID_LEN);
+        }
     }
 
     #[test]
@@ -271,10 +281,16 @@ mod tests {
     }
 
     #[test]
-    fn split_session_has_no_kem_block() {
-        let p = sample(Algorithm::Fake, 44);
-        let parsed = Payload::split(&p.join(), Algorithm::MlKem768, FLAG_SESSION).unwrap();
-        assert_eq!(parsed, p);
+    fn split_session_starts_with_session_id() {
+        let p = Payload {
+            kem_block: vec![0xAA; SESSION_ID_LEN],
+            slot_a: vec![0xBB; 44],
+            slot_b: vec![0xCC; 44],
+        };
+        for a in Algorithm::ALL {
+            assert_eq!(Payload::split(&p.join(), a, FLAG_SESSION).unwrap(), p);
+            assert_eq!(payload_len(a, FLAG_SESSION, 2), SESSION_ID_LEN + 2 * 44);
+        }
     }
 
     #[test]

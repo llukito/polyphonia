@@ -1,4 +1,4 @@
-//! An independent re-implementation of docs/SPEC.md §2–§3 for ML-KEM-768,
+//! An independent re-implementation of docs/SPEC.md §2–§3 for ML-KEM-768 and RSA-2048,
 //! written from the spec text only. It shares no code or constants with
 //! `src/` or poly-core's payload/envelope helpers (every value below is
 //! copied from SPEC with its section), and calls the crypto crates directly.
@@ -7,25 +7,30 @@
 //! tests show it agrees with the spec, in both directions:
 //! - whatever MlKemCipher writes, this reference can read;
 //! - whatever this reference writes, MlKemCipher can read;
-//! - the golden vectors in tests/vectors/ decode with this reference.
+//! - the golden vectors in tests/vectors/ decode with this reference;
+//! - the same for sessions (§3 "Session mode").
 
 mod common;
-
-use std::path::PathBuf;
 
 use aes_gcm::Aes256Gcm;
 use aes_gcm::aead::{Aead, KeyInit, Nonce, Payload as AeadInput};
 use argon2::{Argon2, Params, Version};
 use common::{
     HIDDEN_DECOY, HIDDEN_MESSAGE, HIDDEN_PASSPHRASE, HIDDEN_RNG_DOMAIN, NORMAL_MESSAGE,
-    NORMAL_RNG_DOMAIN, TestRng, VECTOR_SEED,
+    NORMAL_RNG_DOMAIN, RSA_HIDDEN_RNG_DOMAIN, RSA_KEY_RNG_DOMAIN, RSA_PUBLIC_KEY_FILE,
+    RSA_SECRET_KEY_FILE, SESSION_RNG_DOMAIN, TestRng, VECTOR_SEED,
 };
 use hkdf::Hkdf;
 use ml_kem::ml_kem_768::{Ciphertext, DecapsulationKey, EncapsulationKey};
 use ml_kem::{Decapsulate, Encapsulate, Key, KeyExport, Seed};
-use poly_core::{Cipher, OpenRequest, Opened, SealRequest, Slot};
-use poly_crypto::MlKemCipher;
+use poly_core::{Cipher, OpenRequest, Opened, SealRequest, SessionKey, Slot};
+use poly_crypto::{MlKemCipher, RsaCipher};
 use rand::Rng;
+use rsa::pkcs1::{DecodeRsaPublicKey, EncodeRsaPublicKey};
+use rsa::pkcs8::DecodePrivateKey;
+use rsa::sha2::Sha256 as OaepSha256;
+use rsa::traits::PublicKeyParts;
+use rsa::{Oaep, RsaPrivateKey, RsaPublicKey};
 use sha2::{Digest, Sha256};
 
 // ---- Values from docs/SPEC.md --------------------------------------------
@@ -36,6 +41,10 @@ const MAGIC: &[u8; 4] = b"POLY";
 const VERSION: u8 = 1;
 /// §2: algorithm byte for ML-KEM-768.
 const ALG_MLKEM768: u8 = 1;
+/// §2: algorithm byte for RSA-2048-OAEP.
+const ALG_RSA2048: u8 = 2;
+/// §3: RSA-2048 kem_block = 2048-bit modulus / 8.
+const RSA_KEM_BLOCK_LEN: usize = 256;
 /// §2: header = magic (4) + version + algorithm + flags + contact_id (8).
 const HEADER_LEN: usize = 15;
 /// §2: payload_len is a big-endian u32 at offset 15.
@@ -57,6 +66,13 @@ const PAD_TO: usize = 16;
 /// §3 key derivation: HKDF info strings.
 const INFO_SLOT_A: &[u8] = b"polyphonia/v1/slot-a";
 const INFO_SLOT_B: &[u8] = b"polyphonia/v1/slot-b";
+/// §3 "Session mode": HKDF info strings for the session key and id.
+const INFO_SESSION_KEY: &[u8] = b"polyphonia/v1/session-key";
+const INFO_SESSION_ID: &[u8] = b"polyphonia/v1/session-id";
+/// §3 "Session mode": a session message's payload starts with an 8-byte id.
+const SESSION_ID_LEN: usize = 8;
+/// §2: flags bit 0 = SESSION.
+const FLAG_SESSION: u8 = 0b0000_0001;
 /// §3: Argon2id v0x13, m = 19,456 KiB, t = 2, p = 1, 32-byte output.
 const ARGON2_M_KIB: u32 = 19_456;
 const ARGON2_T: u32 = 2;
@@ -75,15 +91,39 @@ fn contact_id(public_key: &[u8]) -> [u8; CONTACT_ID_LEN] {
         .unwrap()
 }
 
-/// Header bytes 0..15 for an ML-KEM message with flags 0: the AES-GCM AAD (§3).
+/// Header bytes 0..15 for an ML-KEM full message (flags 0): the AES-GCM AAD (§3).
 fn header(public_key: &[u8]) -> [u8; HEADER_LEN] {
+    header_with_flags(public_key, 0)
+}
+
+/// Header bytes 0..15 for an ML-KEM message with these flags.
+fn header_with_flags(public_key: &[u8], flags: u8) -> [u8; HEADER_LEN] {
+    header_for(ALG_MLKEM768, public_key, flags)
+}
+
+/// Header bytes 0..15 for any algorithm byte and flags.
+fn header_for(algorithm: u8, public_key: &[u8], flags: u8) -> [u8; HEADER_LEN] {
     let mut h = [0u8; HEADER_LEN];
     h[..4].copy_from_slice(MAGIC);
     h[4] = VERSION;
-    h[5] = ALG_MLKEM768;
-    h[6] = 0; // flags
+    h[5] = algorithm;
+    h[6] = flags;
     h[7..].copy_from_slice(&contact_id(public_key));
     h
+}
+
+/// §3: session_key = HKDF-SHA256(S, info "polyphonia/v1/session-key").
+fn session_key_from(s: &[u8; KEY_LEN]) -> [u8; KEY_LEN] {
+    hkdf(None, s, INFO_SESSION_KEY)
+}
+
+/// §3: session_id = first 8 bytes of HKDF-SHA256(session_key, info "polyphonia/v1/session-id").
+/// (HKDF-Expand output is a prefix-stable stream, so the first 8 bytes of a
+/// 32-byte output equal an 8-byte output.)
+fn session_id(session_key: &[u8; KEY_LEN]) -> [u8; SESSION_ID_LEN] {
+    hkdf(None, session_key, INFO_SESSION_ID)[..SESSION_ID_LEN]
+        .try_into()
+        .unwrap()
 }
 
 fn padded_len(longest_text: usize) -> usize {
@@ -175,6 +215,19 @@ fn split(payload: &[u8], longest_text: usize) -> (&[u8], &[u8], &[u8]) {
     (kem, a, b)
 }
 
+/// Split a session payload per §3: session_id (8) || slot_A || slot_B.
+fn split_session(payload: &[u8], longest_text: usize) -> (&[u8], &[u8], &[u8]) {
+    let slot_len = NONCE_LEN + padded_len(longest_text) + TAG_LEN;
+    assert_eq!(
+        payload.len(),
+        SESSION_ID_LEN + 2 * slot_len,
+        "session payload length"
+    );
+    let (id, slots) = payload.split_at(SESSION_ID_LEN);
+    let (a, b) = slots.split_at(slot_len);
+    (id, a, b)
+}
+
 fn crc32(bytes: &[u8]) -> u32 {
     let mut crc = u32::MAX;
     for &byte in bytes {
@@ -214,8 +267,11 @@ fn cipher_seal(to: &Recipient, message: &str, hidden: Option<(&str, &str)>) -> V
             decoy: hidden.map(|(d, _)| d.into()),
             passphrase: hidden.map(|(_, p)| p.into()),
             aad: header(&to.public_key),
+            flags: 0,
+            session_key: None,
         })
         .unwrap()
+        .payload
 }
 
 fn cipher_open(to: &Recipient, payload: &[u8], passphrase: Option<&str>) -> Opened {
@@ -226,6 +282,8 @@ fn cipher_open(to: &Recipient, payload: &[u8], passphrase: Option<&str>) -> Open
             payload: payload.to_vec(),
             passphrase: passphrase.map(Into::into),
             aad: header(&to.public_key),
+            flags: 0,
+            session_key: None,
         })
         .unwrap()
 }
@@ -352,11 +410,21 @@ fn reference_payload_opens_in_cipher() {
 /// Parse a golden envelope per §2, check every header field and the CRC,
 /// and return the payload.
 fn parse_vector(name: &str, public_key: &[u8]) -> Vec<u8> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/vectors")
-        .join(name);
+    parse_vector_with_flags(name, public_key, 0)
+}
+
+fn parse_vector_with_flags(name: &str, public_key: &[u8], flags: u8) -> Vec<u8> {
+    parse_vector_for(name, ALG_MLKEM768, public_key, flags)
+}
+
+fn parse_vector_for(name: &str, algorithm: u8, public_key: &[u8], flags: u8) -> Vec<u8> {
+    let path = common::vectors_dir().join(name);
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    assert_eq!(&bytes[..HEADER_LEN], &header(public_key), "{name}: header");
+    assert_eq!(
+        &bytes[..HEADER_LEN],
+        &header_for(algorithm, public_key, flags),
+        "{name}: header"
+    );
     let len_field = &bytes[HEADER_LEN..HEADER_LEN + PAYLOAD_LEN_SIZE];
     let payload_len = u32::from_be_bytes(len_field.try_into().unwrap()) as usize;
     let crc_at = HEADER_LEN + PAYLOAD_LEN_SIZE + payload_len;
@@ -395,7 +463,333 @@ fn golden_vectors_follow_spec() {
         Some(NORMAL_MESSAGE)
     );
 
+    // The session vector belongs to the session started by the hidden vector:
+    // derive its key from that vector's S, independently of the cipher.
+    let payload = parse_vector("mlkem_envelope_hidden.bin", &public_key);
+    let (kem, _, _) = split(&payload, HIDDEN_MESSAGE.len().max(HIDDEN_DECOY.len()));
+    let session_key = session_key_from(&decapsulate(&VECTOR_SEED, kem));
+    let session_aad = header_with_flags(&public_key, FLAG_SESSION);
+    let payload = parse_vector_with_flags("mlkem_envelope_session.bin", &public_key, FLAG_SESSION);
+    let (id, a, b) = split_session(&payload, HIDDEN_MESSAGE.len().max(HIDDEN_DECOY.len()));
+    assert_eq!(id, session_id(&session_key));
+    assert_eq!(
+        decrypt_slot(&key_a(&session_key), a, &session_aad).as_deref(),
+        Some(HIDDEN_DECOY)
+    );
+    assert_eq!(
+        decrypt_slot(
+            &key_b(&session_key, HIDDEN_PASSPHRASE, &cid),
+            b,
+            &session_aad
+        )
+        .as_deref(),
+        Some(HIDDEN_MESSAGE)
+    );
+
     // The RNG domains are part of the vector definition; keep them referenced
     // here so a change to them is noticed in review.
     assert_ne!(HIDDEN_RNG_DOMAIN, NORMAL_RNG_DOMAIN);
+    assert_ne!(HIDDEN_RNG_DOMAIN, SESSION_RNG_DOMAIN);
+}
+
+// ---- Sessions (§3 "Session mode") -------------------------------------------
+
+/// Seal through the cipher with any flags/session key; returns (payload, new session key).
+fn cipher_seal_with(
+    to: &Recipient,
+    message: &str,
+    hidden: Option<(&str, &str)>,
+    session_key: Option<&SessionKey>,
+) -> (Vec<u8>, Option<SessionKey>) {
+    let flags = if session_key.is_some() {
+        FLAG_SESSION
+    } else {
+        0
+    };
+    let sealed = MlKemCipher
+        .seal(&SealRequest {
+            recipient_public_key: to.public_key.clone(),
+            contact_id: contact_id(&to.public_key),
+            message: message.into(),
+            decoy: hidden.map(|(d, _)| d.into()),
+            passphrase: hidden.map(|(_, p)| p.into()),
+            aad: header_with_flags(&to.public_key, flags),
+            flags,
+            session_key: session_key.cloned(),
+        })
+        .unwrap();
+    (sealed.payload, sealed.new_session_key)
+}
+
+fn cipher_open_session(
+    to: &Recipient,
+    payload: &[u8],
+    passphrase: Option<&str>,
+    key: &SessionKey,
+) -> Opened {
+    MlKemCipher
+        .open(&OpenRequest {
+            my_secret_key: to.seed.clone(),
+            contact_id: contact_id(&to.public_key),
+            payload: payload.to_vec(),
+            passphrase: passphrase.map(Into::into),
+            aad: header_with_flags(&to.public_key, FLAG_SESSION),
+            flags: FLAG_SESSION,
+            session_key: Some(key.clone()),
+        })
+        .unwrap()
+}
+
+#[test]
+fn full_message_starts_the_spec_session() {
+    let to = recipient();
+    let (payload, sender_key) = cipher_seal_with(&to, "start", None, None);
+    let (kem, _, _) = split(&payload, "start".len());
+    let expected = session_key_from(&decapsulate(&to.seed, kem));
+
+    let sender_key = sender_key.expect("a full message starts a session");
+    assert_eq!(sender_key.as_bytes(), &expected, "sender's session key");
+    let receiver_key = cipher_open(&to, &payload, None)
+        .new_session_key
+        .expect("opening a full message returns its session");
+    assert_eq!(receiver_key.as_bytes(), &expected, "receiver's session key");
+    assert_eq!(sender_key.id(), session_id(&expected), "session id");
+}
+
+#[test]
+fn cipher_session_message_follows_spec() {
+    let to = recipient();
+    let cid = contact_id(&to.public_key);
+    let aad = header_with_flags(&to.public_key, FLAG_SESSION);
+    let key = cipher_seal_with(&to, "start", None, None).1.unwrap();
+    let k = *key.as_bytes();
+
+    // Normal mode.
+    let message = "short and sweet";
+    let (payload, new_key) = cipher_seal_with(&to, message, None, Some(&key));
+    assert!(new_key.is_none(), "a session message starts no session");
+    let (id, a, b) = split_session(&payload, message.len());
+    assert_eq!(id, session_id(&k));
+    assert_eq!(decrypt_slot(&key_a(&k), a, &aad).as_deref(), Some(message));
+    assert_eq!(decrypt_slot(&key_a(&k), b, &aad), None, "slot B is random");
+    // The flags byte is in the AAD: the full-message header doesn't verify.
+    assert_eq!(decrypt_slot(&key_a(&k), a, &header(&to.public_key)), None);
+
+    // Hidden mode.
+    let (real, decoy, pass) = ("the real one", "a decoy", "orchid");
+    let (payload, _) = cipher_seal_with(&to, real, Some((decoy, pass)), Some(&key));
+    let (id, a, b) = split_session(&payload, real.len().max(decoy.len()));
+    assert_eq!(id, session_id(&k));
+    assert_eq!(decrypt_slot(&key_a(&k), a, &aad).as_deref(), Some(decoy));
+    assert_eq!(
+        decrypt_slot(&key_b(&k, pass, &cid), b, &aad).as_deref(),
+        Some(real)
+    );
+}
+
+#[test]
+fn reference_session_payload_opens_in_cipher() {
+    let to = recipient();
+    let cid = contact_id(&to.public_key);
+    let aad = header_with_flags(&to.public_key, FLAG_SESSION);
+    // Start the session from a reference-built full message's S.
+    let ek = EncapsulationKey::new(
+        &Key::<EncapsulationKey>::try_from(to.public_key.as_slice()).unwrap(),
+    )
+    .unwrap();
+    let (_, s) = ek.encapsulate_with_rng(&mut rand::rng());
+    let s: [u8; KEY_LEN] = s.into();
+    let k = session_key_from(&s);
+    let key = SessionKey::from_bytes(k);
+
+    let (real, decoy, pass) = ("built by the reference", "decoy", "orchid");
+    let padded = padded_len(real.len().max(decoy.len()));
+    let payload = [
+        session_id(&k).as_slice(),
+        &encrypt_slot(&key_a(&k), &pad(decoy, padded), &aad),
+        &encrypt_slot(&key_b(&k, pass, &cid), &pad(real, padded), &aad),
+    ]
+    .concat();
+    let b = cipher_open_session(&to, &payload, Some(pass), &key);
+    assert_eq!((b.text.as_str(), b.slot), (real, Slot::B));
+    let a = cipher_open_session(&to, &payload, None, &key);
+    assert_eq!((a.text.as_str(), a.slot), (decoy, Slot::A));
+    assert!(a.new_session_key.is_none());
+}
+
+// ---- RSA-2048 (§3 "Key derivation", step 1) ---------------------------------
+
+/// OAEP exactly as §3 words it: SHA-256, MGF1-SHA256, empty label.
+fn spec_oaep() -> Oaep {
+    Oaep::new_with_mgf_hash::<OaepSha256, OaepSha256>()
+}
+
+/// Split an RSA full-message payload: kem_block (256) || slot_A || slot_B.
+fn split_rsa(payload: &[u8], longest_text: usize) -> (&[u8], &[u8], &[u8]) {
+    let slot_len = NONCE_LEN + padded_len(longest_text) + TAG_LEN;
+    assert_eq!(
+        payload.len(),
+        RSA_KEM_BLOCK_LEN + 2 * slot_len,
+        "RSA payload length"
+    );
+    let (kem, slots) = payload.split_at(RSA_KEM_BLOCK_LEN);
+    let (a, b) = slots.split_at(slot_len);
+    (kem, a, b)
+}
+
+/// S = RSA-OAEP-SHA256-Decrypt(sk, kem_block), sk as PKCS#8 DER.
+fn rsa_unwrap(secret_key: &[u8], kem_block: &[u8]) -> [u8; KEY_LEN] {
+    let sk = RsaPrivateKey::from_pkcs8_der(secret_key).expect("secret key is PKCS#8 DER");
+    sk.decrypt(spec_oaep(), kem_block)
+        .expect("kem_block decrypts with OAEP-SHA256")
+        .try_into()
+        .expect("S is 32 bytes")
+}
+
+struct RsaRecipient {
+    public_key: Vec<u8>,
+    secret_key: Vec<u8>,
+}
+
+fn rsa_recipient() -> RsaRecipient {
+    let me = RsaCipher.generate_identity().unwrap();
+    RsaRecipient {
+        public_key: me.public_key,
+        secret_key: me.secret_key,
+    }
+}
+
+fn rsa_seal(
+    to: &RsaRecipient,
+    message: &str,
+    hidden: Option<(&str, &str)>,
+) -> (Vec<u8>, SessionKey) {
+    let sealed = RsaCipher
+        .seal(&SealRequest {
+            recipient_public_key: to.public_key.clone(),
+            contact_id: contact_id(&to.public_key),
+            message: message.into(),
+            decoy: hidden.map(|(d, _)| d.into()),
+            passphrase: hidden.map(|(_, p)| p.into()),
+            aad: header_for(ALG_RSA2048, &to.public_key, 0),
+            flags: 0,
+            session_key: None,
+        })
+        .unwrap();
+    (
+        sealed.payload,
+        sealed
+            .new_session_key
+            .expect("a full message starts a session"),
+    )
+}
+
+#[test]
+fn rsa_key_encoding_follows_spec() {
+    // §3 key encodings: public PKCS#1 DER, secret PKCS#8 DER, 2048-bit modulus.
+    let to = rsa_recipient();
+    let pk = RsaPublicKey::from_pkcs1_der(&to.public_key).expect("PKCS#1 DER");
+    let sk = RsaPrivateKey::from_pkcs8_der(&to.secret_key).expect("PKCS#8 DER");
+    assert_eq!(pk.size(), RSA_KEM_BLOCK_LEN, "2048-bit modulus");
+    assert_eq!(sk.to_public_key(), pk);
+    assert_eq!(
+        pk.to_pkcs1_der().unwrap().as_bytes(),
+        to.public_key.as_slice()
+    );
+}
+
+#[test]
+fn cipher_rsa_messages_follow_spec() {
+    let to = rsa_recipient();
+    let aad = header_for(ALG_RSA2048, &to.public_key, 0);
+    let cid = contact_id(&to.public_key);
+
+    // Normal mode.
+    let message = "hello, RSA";
+    let (payload, session_key) = rsa_seal(&to, message, None);
+    let (kem, a, b) = split_rsa(&payload, message.len());
+    let s = rsa_unwrap(&to.secret_key, kem);
+    assert_eq!(decrypt_slot(&key_a(&s), a, &aad).as_deref(), Some(message));
+    assert_eq!(decrypt_slot(&key_a(&s), b, &aad), None, "slot B is random");
+    assert_eq!(
+        session_key.as_bytes(),
+        &session_key_from(&s),
+        "session key = HKDF(S)"
+    );
+    // The algorithm byte is in the AAD: an ML-KEM header doesn't verify.
+    assert_eq!(decrypt_slot(&key_a(&s), a, &header(&to.public_key)), None);
+
+    // Hidden mode.
+    let (real, decoy, pass) = ("the real one", "a much longer decoy text here", "orchid");
+    let (payload, _) = rsa_seal(&to, real, Some((decoy, pass)));
+    let (kem, a, b) = split_rsa(&payload, real.len().max(decoy.len()));
+    let s = rsa_unwrap(&to.secret_key, kem);
+    assert_eq!(decrypt_slot(&key_a(&s), a, &aad).as_deref(), Some(decoy));
+    assert_eq!(
+        decrypt_slot(&key_b(&s, pass, &cid), b, &aad).as_deref(),
+        Some(real)
+    );
+}
+
+#[test]
+fn reference_rsa_payload_opens_in_cipher() {
+    let to = rsa_recipient();
+    let aad = header_for(ALG_RSA2048, &to.public_key, 0);
+    let cid = contact_id(&to.public_key);
+    let pk = RsaPublicKey::from_pkcs1_der(&to.public_key).unwrap();
+
+    let mut s = [0u8; KEY_LEN];
+    rand::rng().fill_bytes(&mut s);
+    let kem = pk
+        .encrypt(&mut TestRng::new(b"reference-rsa-oaep"), spec_oaep(), &s)
+        .unwrap();
+    let (real, decoy, pass) = ("built by the reference", "decoy", "orchid");
+    let padded = padded_len(real.len().max(decoy.len()));
+    let payload = [
+        kem.as_slice(),
+        &encrypt_slot(&key_a(&s), &pad(decoy, padded), &aad),
+        &encrypt_slot(&key_b(&s, pass, &cid), &pad(real, padded), &aad),
+    ]
+    .concat();
+    let open = |passphrase: Option<&str>| {
+        RsaCipher
+            .open(&OpenRequest {
+                my_secret_key: to.secret_key.clone(),
+                contact_id: cid,
+                payload: payload.clone(),
+                passphrase: passphrase.map(Into::into),
+                aad,
+                flags: 0,
+                session_key: None,
+            })
+            .unwrap()
+    };
+    let b = open(Some(pass));
+    assert_eq!((b.text.as_str(), b.slot), (real, Slot::B));
+    let a = open(None);
+    assert_eq!((a.text.as_str(), a.slot), (decoy, Slot::A));
+    assert_eq!(a.new_session_key.unwrap().as_bytes(), &session_key_from(&s));
+}
+
+#[test]
+fn rsa_golden_vector_follows_spec() {
+    let dir = common::vectors_dir();
+    let public_key = std::fs::read(dir.join(RSA_PUBLIC_KEY_FILE)).unwrap();
+    let secret_key = std::fs::read(dir.join(RSA_SECRET_KEY_FILE)).unwrap();
+    let aad = header_for(ALG_RSA2048, &public_key, 0);
+    let cid = contact_id(&public_key);
+
+    let payload = parse_vector_for("rsa_envelope_hidden.bin", ALG_RSA2048, &public_key, 0);
+    let (kem, a, b) = split_rsa(&payload, HIDDEN_MESSAGE.len().max(HIDDEN_DECOY.len()));
+    let s = rsa_unwrap(&secret_key, kem);
+    assert_eq!(
+        decrypt_slot(&key_a(&s), a, &aad).as_deref(),
+        Some(HIDDEN_DECOY)
+    );
+    assert_eq!(
+        decrypt_slot(&key_b(&s, HIDDEN_PASSPHRASE, &cid), b, &aad).as_deref(),
+        Some(HIDDEN_MESSAGE)
+    );
+    // Part of the vector definition (see tests/vectors/README.md).
+    assert_ne!(RSA_KEY_RNG_DOMAIN, RSA_HIDDEN_RNG_DOMAIN);
 }

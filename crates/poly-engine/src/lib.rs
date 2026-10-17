@@ -8,16 +8,14 @@ mod raw;
 
 pub use poly_core;
 pub use poly_core::{
-    Algorithm, CarrierKind, CarrierOptions, Envelope, Identity, PolyError, Slot, contact_id,
+    Algorithm, CarrierKind, CarrierOptions, Envelope, Identity, PolyError, SessionId, SessionKey,
+    Slot, contact_id, session_id,
 };
 pub use raw::RawDebugCarrier;
 
-use poly_core::envelope::header_aad;
+use poly_core::envelope::{FLAG_SESSION, header_aad};
 use poly_core::payload::payload_len;
 use poly_core::{Carrier, Cipher, OpenRequest, SealRequest};
-
-/// Flags written by this version: SESSION mode is reserved, so always 0.
-const MVP_FLAGS: u8 = 0;
 
 /// What to encrypt and how.
 #[derive(Clone)]
@@ -31,6 +29,20 @@ pub struct EncryptRequest {
     pub algorithm: Algorithm,
     pub carrier: CarrierKind,
     pub options: CarrierOptions,
+    /// Some: send a session message in this session (SPEC §3 "Session mode");
+    /// `algorithm` must be the one that started it. None: a full message.
+    pub session_key: Option<SessionKey>,
+}
+
+impl EncryptRequest {
+    /// Envelope flags this request produces.
+    fn flags(&self) -> u8 {
+        if self.session_key.is_some() {
+            FLAG_SESSION
+        } else {
+            0
+        }
+    }
 }
 
 /// A finished carrier file, ready to send.
@@ -42,6 +54,9 @@ pub struct EncodedFile {
     pub mime: &'static str,
     pub carrier: CarrierKind,
     pub algorithm: Algorithm,
+    /// The session this full message starts, for the app to store
+    /// (None for a session message).
+    pub session_key: Option<SessionKey>,
 }
 
 /// A received file to open.
@@ -53,6 +68,9 @@ pub struct DecryptRequest {
     pub my_public_key: Vec<u8>,
     /// If given, slot B is tried first.
     pub passphrase: Option<String>,
+    /// Every session key the receiver has stored. A session message is opened
+    /// with the one whose id matches; none matching gives `UnknownSession`.
+    pub session_keys: Vec<SessionKey>,
 }
 
 /// The opened message.
@@ -62,6 +80,9 @@ pub struct Decrypted {
     pub slot: Slot,
     pub carrier: CarrierKind,
     pub algorithm: Algorithm,
+    /// The session this full message started, for the app to store
+    /// (None for a session message).
+    pub session_key: Option<SessionKey>,
 }
 
 /// A file's detected carrier and envelope, found without any key.
@@ -136,7 +157,7 @@ impl Engine {
             .message
             .len()
             .max(req.decoy.as_ref().map_or(0, String::len));
-        Envelope::encoded_len(payload_len(req.algorithm, MVP_FLAGS, longest))
+        Envelope::encoded_len(payload_len(req.algorithm, req.flags(), longest))
     }
 
     /// Encrypt a message into a carrier file. Checks capacity before any crypto.
@@ -152,15 +173,19 @@ impl Engine {
         }
 
         let contact_id = contact_id(&req.recipient_public_key);
-        let payload = cipher.seal(&SealRequest {
+        let flags = req.flags();
+        let sealed = cipher.seal(&SealRequest {
             recipient_public_key: req.recipient_public_key.clone(),
             contact_id,
             message: req.message.clone(),
             decoy: req.decoy.clone(),
             passphrase: req.passphrase.clone(),
-            aad: header_aad(req.algorithm, MVP_FLAGS, &contact_id),
+            aad: header_aad(req.algorithm, flags, &contact_id),
+            flags,
+            session_key: req.session_key.clone(),
         })?;
-        let envelope = Envelope::new(req.algorithm, MVP_FLAGS, contact_id, payload).to_bytes()?;
+        let envelope =
+            Envelope::new(req.algorithm, flags, contact_id, sealed.payload).to_bytes()?;
         debug_assert_eq!(envelope.len(), needed, "payload size formula out of sync");
 
         Ok(EncodedFile {
@@ -169,6 +194,7 @@ impl Engine {
             mime: carrier.mime_type(),
             carrier: carrier.kind(),
             algorithm: req.algorithm,
+            session_key: sealed.new_session_key,
         })
     }
 
@@ -203,11 +229,29 @@ impl Engine {
     }
 
     /// Detect the carrier, check the recipient and open the message.
+    ///
+    /// A session message is opened with the stored session key whose id
+    /// matches the payload ([`PolyError::UnknownSession`] if none does).
     pub fn decrypt(&self, req: &DecryptRequest) -> Result<Decrypted, PolyError> {
         let Inspected { carrier, envelope } = self.inspect(&req.file)?;
         if envelope.contact_id != contact_id(&req.my_public_key) {
             return Err(PolyError::WrongRecipient);
         }
+        let session_key = match envelope.session_id() {
+            Some(id) => Some(
+                req.session_keys
+                    .iter()
+                    .find(|key| key.id() == id)
+                    .cloned()
+                    .ok_or(PolyError::UnknownSession)?,
+            ),
+            None if envelope.is_session() => {
+                return Err(PolyError::MalformedPayload(
+                    "session message shorter than its session id",
+                ));
+            }
+            None => None,
+        };
         let aad = envelope.aad();
         let opened = self.cipher(envelope.algorithm)?.open(&OpenRequest {
             my_secret_key: req.my_secret_key.clone(),
@@ -215,12 +259,15 @@ impl Engine {
             payload: envelope.payload,
             passphrase: req.passphrase.clone(),
             aad,
+            flags: envelope.flags,
+            session_key,
         })?;
         Ok(Decrypted {
             text: opened.text,
             slot: opened.slot,
             carrier,
             algorithm: envelope.algorithm,
+            session_key: opened.new_session_key,
         })
     }
 }

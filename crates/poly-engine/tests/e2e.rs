@@ -19,6 +19,7 @@ fn request(to: &Identity, message: &str) -> EncryptRequest {
         algorithm: Algorithm::Fake,
         carrier: CarrierKind::RawDebug,
         options: CarrierOptions::default(),
+        session_key: None,
     }
 }
 
@@ -34,6 +35,7 @@ fn open(
             my_secret_key: me.secret_key.clone(),
             my_public_key: me.public_key.clone(),
             passphrase: passphrase.map(Into::into),
+            session_keys: Vec::new(),
         })
         .map(|d| (d.text, d.slot))
 }
@@ -57,6 +59,7 @@ fn normal_mode() {
             my_secret_key: me.secret_key.clone(),
             my_public_key: me.public_key.clone(),
             passphrase: None,
+            session_keys: Vec::new(),
         })
         .unwrap();
     assert_eq!(d.text, "hello bob");
@@ -268,6 +271,7 @@ fn auto_detect_skips_carriers_that_do_not_match() {
             my_secret_key: me.secret_key.clone(),
             my_public_key: me.public_key.clone(),
             passphrase: None,
+            session_keys: Vec::new(),
         })
         .unwrap();
     assert_eq!(

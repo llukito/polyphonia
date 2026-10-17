@@ -13,10 +13,28 @@ pub const VECTOR_SEED: [u8; 64] = [0x22; 64];
 pub const HIDDEN_RNG_DOMAIN: &[u8] = b"polyphonia/test-rng/mlkem-hidden";
 /// TestRng domain for `mlkem_envelope_normal.bin`.
 pub const NORMAL_RNG_DOMAIN: &[u8] = b"polyphonia/test-rng/mlkem-normal";
+/// TestRng domain for `mlkem_envelope_session.bin`, a hidden-mode session
+/// message in the session started by `mlkem_envelope_hidden.bin`.
+pub const SESSION_RNG_DOMAIN: &[u8] = b"polyphonia/test-rng/mlkem-session";
 pub const HIDDEN_MESSAGE: &str = "the real message";
 pub const HIDDEN_DECOY: &str = "a harmless decoy";
 pub const HIDDEN_PASSPHRASE: &str = "correct horse";
 pub const NORMAL_MESSAGE: &str = "lunch at noon?";
+
+/// RSA vector key files (generated once with RSA_KEY_RNG_DOMAIN, then kept:
+/// RSA key generation depends on the rsa crate's prime search, so the files,
+/// not the RNG, are the reference).
+pub const RSA_PUBLIC_KEY_FILE: &str = "rsa_public_key.der";
+pub const RSA_SECRET_KEY_FILE: &str = "rsa_secret_key.der";
+/// TestRng domain used to generate the RSA vector key.
+pub const RSA_KEY_RNG_DOMAIN: &[u8] = b"polyphonia/test-rng/rsa-key";
+/// TestRng domain for `rsa_envelope_hidden.bin`.
+pub const RSA_HIDDEN_RNG_DOMAIN: &[u8] = b"polyphonia/test-rng/rsa-hidden";
+
+/// tests/vectors/ at the repository root.
+pub fn vectors_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/vectors")
+}
 
 /// SHA-256 output length, the size of one block of the TestRng stream.
 const BLOCK_LEN: usize = 32;
@@ -84,3 +102,29 @@ impl TryRng for TestRng {
 }
 
 impl TryCryptoRng for TestRng {}
+
+// The same stream for the rsa crate, which uses rand_core 0.6.
+impl rsa::rand_core::RngCore for TestRng {
+    fn next_u32(&mut self) -> u32 {
+        let mut bytes = [0; 4];
+        self.fill(&mut bytes);
+        u32::from_le_bytes(bytes)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut bytes = [0; 8];
+        self.fill(&mut bytes);
+        u64::from_le_bytes(bytes)
+    }
+
+    fn fill_bytes(&mut self, dst: &mut [u8]) {
+        self.fill(dst);
+    }
+
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), rsa::rand_core::Error> {
+        self.fill(dst);
+        Ok(())
+    }
+}
+
+impl rsa::rand_core::CryptoRng for TestRng {}

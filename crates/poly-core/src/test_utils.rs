@@ -9,9 +9,10 @@
 use rand::rngs::StdRng;
 use rand::{Rng, RngExt, SeedableRng};
 
-use crate::envelope::{ENVELOPE_OVERHEAD, Envelope, contact_id, header_aad};
-use crate::payload::{Payload, payload_len};
-use crate::types::{Algorithm, CarrierOptions, OpenRequest, Opened, SealRequest, Slot};
+use crate::envelope::{ENVELOPE_OVERHEAD, Envelope, FLAG_SESSION, contact_id, header_aad};
+use crate::payload::{Payload, SESSION_ID_LEN, SESSION_KEY_LEN, payload_len};
+use crate::session::SessionKey;
+use crate::types::{Algorithm, CarrierOptions, OpenRequest, SealRequest, Slot};
 use crate::{Carrier, Cipher, PolyError};
 
 /// Seed for all helper randomness.
@@ -146,8 +147,12 @@ pub fn assert_cipher_roundtrip(c: &dyn Cipher) {
             decoy: decoy.map(Into::into),
             passphrase: passphrase.map(Into::into),
             aad,
+            flags: 0,
+            session_key: None,
         })
+        .map(|sealed| sealed.payload)
     };
+    // Compared on (text, slot); the session a full message starts is checked separately.
     let open_with = |payload: &[u8], passphrase: Option<&str>, aad, key: &[u8]| {
         c.open(&OpenRequest {
             my_secret_key: key.to_vec(),
@@ -155,17 +160,15 @@ pub fn assert_cipher_roundtrip(c: &dyn Cipher) {
             payload: payload.to_vec(),
             passphrase: passphrase.map(Into::into),
             aad,
+            flags: 0,
+            session_key: None,
         })
+        .map(|o| (o.text, o.slot))
     };
     let open = |payload: &[u8], passphrase: Option<&str>| {
         open_with(payload, passphrase, aad, &me.secret_key)
     };
-    let opened = |text: &str, slot| {
-        Ok(Opened {
-            text: text.into(),
-            slot,
-        })
-    };
+    let opened = |text: &str, slot| Ok((text.to_string(), slot));
 
     // Normal mode.
     let long = "long message ".repeat(40);
@@ -257,6 +260,180 @@ pub fn assert_cipher_roundtrip(c: &dyn Cipher) {
         assert!(
             open(&p[..cut], None).is_err(),
             "truncated to {cut} must fail"
+        );
+    }
+
+    assert_cipher_sessions(c);
+}
+
+/// Check a cipher's session mode (SPEC §3 "Session mode"); called by
+/// [`assert_cipher_roundtrip`]:
+///
+/// - a full message starts a session: seal and open return the same key;
+/// - session messages start with the key's id, have the SPEC length and open
+///   with that key in normal and hidden mode (right / wrong / no passphrase),
+///   returning no new session key;
+/// - a wrong session key or a changed session id -> `DecryptFailed`;
+/// - SESSION flag without key, key without flag, unknown flag bits ->
+///   `InvalidRequest`; a truncated session payload -> an error.
+pub fn assert_cipher_sessions(c: &dyn Cipher) {
+    let alg = c.algorithm();
+    let me = c.generate_identity().expect("generate_identity");
+    let cid = contact_id(&me.public_key);
+    let full_aad = header_aad(alg, 0, &cid);
+    let session_aad = header_aad(alg, FLAG_SESSION, &cid);
+
+    let request = |message: &str, hidden: Option<(&str, &str)>, flags, key: Option<&SessionKey>| {
+        SealRequest {
+            recipient_public_key: me.public_key.clone(),
+            contact_id: cid,
+            message: message.into(),
+            decoy: hidden.map(|(d, _)| d.into()),
+            passphrase: hidden.map(|(_, p)| p.into()),
+            aad: if flags & FLAG_SESSION != 0 {
+                session_aad
+            } else {
+                full_aad
+            },
+            flags,
+            session_key: key.cloned(),
+        }
+    };
+    let open = |payload: &[u8], passphrase: Option<&str>, flags, key: Option<&SessionKey>| {
+        c.open(&OpenRequest {
+            my_secret_key: me.secret_key.clone(),
+            contact_id: cid,
+            payload: payload.to_vec(),
+            passphrase: passphrase.map(Into::into),
+            aad: if flags & FLAG_SESSION != 0 {
+                session_aad
+            } else {
+                full_aad
+            },
+            flags,
+            session_key: key.cloned(),
+        })
+    };
+    let session_open = |payload: &[u8], passphrase: Option<&str>, key: &SessionKey| {
+        open(payload, passphrase, FLAG_SESSION, Some(key))
+            .map(|o| (o.text, o.slot, o.new_session_key))
+    };
+
+    // A full message starts a session; both sides get the same key.
+    let full = c
+        .seal(&request("start", None, 0, None))
+        .expect("seal full message");
+    let key = full
+        .new_session_key
+        .clone()
+        .expect("a full message must start a session");
+    let opened = open(&full.payload, None, 0, None).expect("open full message");
+    assert_eq!(opened.text, "start");
+    assert_eq!(
+        opened.new_session_key.as_ref(),
+        Some(&key),
+        "sender and receiver must derive the same session key"
+    );
+
+    // Normal-mode session messages.
+    for msg in ["", "hi", "a session message, much shorter on the wire"] {
+        let sealed = c
+            .seal(&request(msg, None, FLAG_SESSION, Some(&key)))
+            .expect("seal session message");
+        assert_eq!(
+            sealed.new_session_key, None,
+            "session messages start no session"
+        );
+        let p = &sealed.payload;
+        assert_eq!(
+            p.len(),
+            payload_len(alg, FLAG_SESSION, msg.len()),
+            "session payload length"
+        );
+        assert_eq!(
+            p[..SESSION_ID_LEN],
+            key.id(),
+            "session payload starts with the id"
+        );
+        let parts = Payload::split(p, alg, FLAG_SESSION).expect("session payload splits");
+        assert_eq!(parts.slot_a.len(), parts.slot_b.len());
+        assert_eq!(session_open(p, None, &key), Ok((msg.into(), Slot::A, None)));
+        assert_eq!(
+            session_open(p, Some("some passphrase"), &key),
+            Ok((msg.into(), Slot::A, None))
+        );
+    }
+
+    // Hidden-mode session message.
+    let pass = "orchid";
+    let hidden = c
+        .seal(&request(
+            "real",
+            Some(("decoy", pass)),
+            FLAG_SESSION,
+            Some(&key),
+        ))
+        .expect("seal hidden session message")
+        .payload;
+    assert_eq!(
+        session_open(&hidden, Some(pass), &key),
+        Ok(("real".into(), Slot::B, None))
+    );
+    assert_eq!(
+        session_open(&hidden, Some("tulip"), &key),
+        Ok(("decoy".into(), Slot::A, None))
+    );
+    assert_eq!(
+        session_open(&hidden, None, &key),
+        Ok(("decoy".into(), Slot::A, None))
+    );
+
+    // Wrong key, changed id, truncation.
+    let p = c
+        .seal(&request("tamper", None, FLAG_SESSION, Some(&key)))
+        .unwrap()
+        .payload;
+    let other = SessionKey::from_bytes([0x5A; SESSION_KEY_LEN]);
+    assert_eq!(
+        session_open(&p, None, &other),
+        Err(PolyError::DecryptFailed),
+        "wrong session key"
+    );
+    let mut t = p.clone();
+    t[0] ^= 0x01;
+    assert_eq!(
+        session_open(&t, None, &key),
+        Err(PolyError::DecryptFailed),
+        "changed session id"
+    );
+    for cut in [0, 1, SESSION_ID_LEN, p.len() / 2, p.len() - 1] {
+        assert!(
+            session_open(&p[..cut], None, &key).is_err(),
+            "truncated to {cut} must fail"
+        );
+    }
+
+    // Request rules.
+    for (flags, key) in [
+        (FLAG_SESSION, None),
+        (0, Some(&key)),
+        (FLAG_SESSION | 0b10, Some(&key)),
+    ] {
+        assert!(
+            matches!(
+                c.seal(&request("x", None, flags, key)),
+                Err(PolyError::InvalidRequest(_))
+            ),
+            "seal with flags {flags:#b} and key {:?}",
+            key.is_some()
+        );
+        assert!(
+            matches!(
+                open(&p, None, flags, key),
+                Err(PolyError::InvalidRequest(_))
+            ),
+            "open with flags {flags:#b} and key {:?}",
+            key.is_some()
         );
     }
 }

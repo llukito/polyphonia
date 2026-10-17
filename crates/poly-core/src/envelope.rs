@@ -17,6 +17,8 @@
 use sha2::{Digest, Sha256};
 
 use crate::PolyError;
+use crate::payload::SESSION_ID_LEN;
+use crate::session::SessionId;
 use crate::types::{AAD_LEN, Algorithm, CONTACT_ID_LEN, ContactId};
 
 /// ASCII "POLY". Random data matches 4 bytes only 1 in 2^32 times,
@@ -25,8 +27,8 @@ pub const MAGIC: [u8; 4] = *b"POLY";
 /// The only envelope version this build reads and writes.
 pub const VERSION: u8 = 1;
 
-/// Flag bit 0: SESSION mode (no KEM block; uses a saved session key).
-/// Reserved for future work; the MVP always writes 0.
+/// Flag bit 0: SESSION mode (SPEC §3 "Session mode"): the payload starts
+/// with an 8-byte session id instead of the KEM block.
 pub const FLAG_SESSION: u8 = 0b0000_0001;
 /// All flag bits this version defines. Any other bit set is an error.
 pub const KNOWN_FLAGS: u8 = FLAG_SESSION;
@@ -88,6 +90,15 @@ impl Envelope {
     /// Whether the SESSION flag is set.
     pub fn is_session(&self) -> bool {
         self.flags & FLAG_SESSION != 0
+    }
+
+    /// The session id of a session message (None for a full message, or if
+    /// the payload is too short to hold one).
+    pub fn session_id(&self) -> Option<SessionId> {
+        if !self.is_session() {
+            return None;
+        }
+        self.payload.get(..SESSION_ID_LEN)?.try_into().ok()
     }
 
     /// Serialize. Fails only if the payload exceeds u32::MAX bytes.

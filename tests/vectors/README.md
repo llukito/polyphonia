@@ -51,6 +51,21 @@ Padded slot plaintext = u16 length `0010` ‖ 16 bytes of text ‖ 14 zero bytes
 poly inspect tests/vectors/envelope_hidden.bin
 ```
 
+## `envelope_session.bin` (151 bytes): hidden-mode session message
+
+Same key and texts as `envelope_hidden.bin`, sent as a session message
+(SPEC §3 "Session mode"). FakeCipher's session key for a recipient is
+SHA-256(`"polyphonia/fake/session"` ‖ public key), so this file is stable.
+
+| offset | size | field | value |
+|---|---|---|---|
+| 0 | 15 | header | `504f4c59 01 ff 01 abecdbe8cf6cfa0b` (flags = SESSION) |
+| 15 | 4 | payload_len | `00000080` = 128 = 8 + 2 × 60 |
+| 19 | 8 | session_id | `d9d58587a62fb2f3` |
+| 27 | 60 | slot A | as in `envelope_hidden.bin` (the tag covers the new header) |
+| 87 | 60 | slot B | as in `envelope_hidden.bin` |
+| 147 | 4 | CRC-32 | `ce1f4801` |
+
 ## ML-KEM-768 vectors
 
 Produced with **MlKemCipher** by `crates/poly-crypto/tests/golden.rs`
@@ -107,3 +122,54 @@ Message `lunch at noon?`, RNG domain `polyphonia/test-rng/mlkem-normal`.
 | 1107 | 44 | slot A | nonce (12) ‖ AES-256-GCM(key_A, padded message, 16 B) ‖ tag (16) |
 | 1151 | 44 | slot B | 44 random bytes from the RNG |
 | 1195 | 4 | CRC-32 | `bb7a809e` |
+
+### `mlkem_envelope_session.bin` (151 bytes): hidden-mode session message
+
+A session message in the session started by `mlkem_envelope_hidden.bin`
+(session_key = HKDF-SHA256(S of that file, info `"polyphonia/v1/session-key"`)),
+with the same texts and passphrase, RNG domain
+`polyphonia/test-rng/mlkem-session` (12 bytes slot A nonce, then 12 bytes
+slot B nonce). The same message as a full message is 1231 bytes.
+
+| offset | size | field | value |
+|---|---|---|---|
+| 0 | 15 | header | `504f4c59 01 01 01 35818cf22b7ec19f` (flags = SESSION) |
+| 15 | 4 | payload_len | `00000080` = 128 = 8 + 2 × 60 |
+| 19 | 8 | session_id | `a1eeece999f2d0de` = HKDF-SHA256(session_key, info `"polyphonia/v1/session-id"`)[..8] |
+| 27 | 60 | slot A | AES-256-GCM with key_A derived from session_key (padded decoy) |
+| 87 | 60 | slot B | AES-256-GCM with key_B derived from session_key (padded message) |
+| 147 | 4 | CRC-32 | `83363b19` |
+
+## RSA-2048 vector
+
+Produced with **RsaCipher** by `crates/poly-crypto/tests/golden.rs` and
+decoded independently by `crates/poly-crypto/tests/spec_reference.rs`.
+
+| | value |
+|---|---|
+| `rsa_public_key.der` | 270 bytes, PKCS#1 DER (2048-bit modulus) |
+| `rsa_secret_key.der` | 1218 bytes, PKCS#8 DER |
+| contact_id | `0c9c5eb5c8254b2d` |
+
+The key files are the reference. They were generated once with the test RNG
+(domain `polyphonia/test-rng/rsa-key`) and are only regenerated if missing,
+because RSA key generation depends on the `rsa` crate's prime search. The
+envelope uses the same test RNG (see "Deterministic RNG" above); bytes are
+drawn in this order: 32 bytes for S, the OAEP seed (drawn by the `rsa`
+crate), 12 bytes for the slot A nonce, 12 bytes for the slot B nonce. An
+`rsa` crate upgrade that changes how OAEP draws its seed changes this file:
+regenerate it then, with the lead's approval.
+
+### `rsa_envelope_hidden.bin` (399 bytes): hidden mode
+
+Message `the real message`, decoy `a harmless decoy`, passphrase `correct horse`,
+RNG domain `polyphonia/test-rng/rsa-hidden`.
+
+| offset | size | field | value |
+|---|---|---|---|
+| 0 | 15 | header | `504f4c59 01 02 00 0c9c5eb5c8254b2d` (POLY, v1, RSA-2048, no flags, contact_id) |
+| 15 | 4 | payload_len | `00000178` = 376 = 256 + 2 × 60 |
+| 19 | 256 | kem_block | RSA-OAEP-SHA256(public key, S) |
+| 275 | 60 | slot A | nonce (12) ‖ AES-256-GCM(key_A, padded decoy, 32 B) ‖ tag (16) |
+| 335 | 60 | slot B | nonce (12) ‖ AES-256-GCM(key_B, padded message, 32 B) ‖ tag (16) |
+| 395 | 4 | CRC-32 | `74683d9d` |

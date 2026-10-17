@@ -207,10 +207,12 @@ pub(crate) fn open_slots(
         (Some(mut text), _) => Ok(Opened {
             text: std::mem::take(&mut *text),
             slot: Slot::B,
+            new_session_key: None,
         }),
         (None, Some(mut text)) => Ok(Opened {
             text: std::mem::take(&mut *text),
             slot: Slot::A,
+            new_session_key: None,
         }),
         (None, None) => Err(PolyError::DecryptFailed),
     }

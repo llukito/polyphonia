@@ -10,9 +10,10 @@ publish.workspace = true
 poly-core.workspace = true
 sha2.workspace = true
 rand.workspace = true
-# Used by the real ciphers (role 1); rsa is not used until RsaCipher is implemented.
+# Used by the real ciphers (role 1).
 ml-kem = { workspace = true, features = ["zeroize"] }
-rsa.workspace = true
+# "sha2": rsa 0.9's own SHA-256 (sha2 0.10, the digest version rsa 0.9 uses) for OAEP.
+rsa = { workspace = true, features = ["sha2"] }
 aes-gcm = { workspace = true, features = ["zeroize"] }
 hkdf.workspace = true
 argon2 = { workspace = true, features = ["zeroize"] }

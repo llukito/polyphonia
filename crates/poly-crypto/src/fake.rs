@@ -13,13 +13,21 @@
 //! - slot B in normal mode: random bytes.
 //!
 //! Keys: secret = 32 random bytes, public = SHA-256(domain || secret).
+//!
+//! Sessions: a full message's session key = SHA-256(domain || public key);
+//! session messages carry the session id and use the same slots as above.
 
 use poly_core::payload::{
     Payload, SLOT_BLOCK, TAG_LEN, padded_len, slot_len, slot_pad, slot_unpad, split_slot,
 };
-use poly_core::{Algorithm, Cipher, Identity, OpenRequest, Opened, PolyError, SealRequest, Slot};
+use poly_core::{
+    Algorithm, Cipher, Identity, OpenRequest, Opened, PolyError, SealRequest, Sealed, SessionKey,
+    Slot,
+};
 use rand::Rng;
 use sha2::{Digest, Sha256};
+
+use crate::session::{self, Keying};
 
 /// Fake secret key length (arbitrary; matches a 256-bit key).
 pub const FAKE_SECRET_KEY_LEN: usize = 32;
@@ -30,6 +38,7 @@ const FAKE_NONCE: [u8; poly_core::payload::NONCE_LEN] = [0; poly_core::payload::
 /// Domain separators so the fake hashes can't be confused with each other.
 const DOMAIN_PUBLIC_KEY: &[u8] = b"polyphonia/fake/public-key";
 const DOMAIN_SLOT_A: &[u8] = b"polyphonia/fake/slot-a";
+const DOMAIN_SESSION: &[u8] = b"polyphonia/fake/session";
 
 // The padded plaintext is always block aligned, like AES-GCM ciphertext here.
 const _: () = assert!(SLOT_BLOCK == 16);
@@ -72,6 +81,17 @@ fn tag_a(public_key: &[u8], aad: &[u8], nonce: &[u8], ct: &[u8]) -> [u8; TAG_LEN
     tag
 }
 
+/// The (fake, deterministic) session key a full message to `public_key` starts.
+fn session_key(public_key: &[u8]) -> SessionKey {
+    SessionKey::from_bytes(
+        Sha256::new()
+            .chain_update(DOMAIN_SESSION)
+            .chain_update(public_key)
+            .finalize()
+            .into(),
+    )
+}
+
 fn tag_b(passphrase: &str) -> [u8; TAG_LEN] {
     let digest = Sha256::digest(passphrase.as_bytes());
     let mut tag = [0u8; TAG_LEN];
@@ -98,7 +118,8 @@ impl Cipher for FakeCipher {
         Self::identity_from_secret(&secret)
     }
 
-    fn seal(&self, req: &SealRequest) -> Result<Vec<u8>, PolyError> {
+    fn seal(&self, req: &SealRequest) -> Result<Sealed, PolyError> {
+        let keying = session::keying(req.flags, req.session_key.as_ref())?;
         if req.recipient_public_key.len() != FAKE_PUBLIC_KEY_LEN {
             return Err(PolyError::InvalidKey("fake public key must be 32 bytes"));
         }
@@ -127,17 +148,32 @@ impl Cipher for FakeCipher {
                 random
             }
         };
-        Ok(Payload {
-            kem_block: Vec::new(),
-            slot_a,
-            slot_b,
-        }
-        .join())
+        let (kem_block, new_session_key) = match keying {
+            Keying::Full => (Vec::new(), Some(session_key(&req.recipient_public_key))),
+            Keying::Session(key) => (key.id().to_vec(), None),
+        };
+        Ok(Sealed {
+            payload: Payload {
+                kem_block,
+                slot_a,
+                slot_b,
+            }
+            .join(),
+            new_session_key,
+        })
     }
 
     fn open(&self, req: &OpenRequest) -> Result<Opened, PolyError> {
+        let keying = session::keying(req.flags, req.session_key.as_ref())?;
         let public_key = public_from_secret(&req.my_secret_key)?;
-        let payload = Payload::split(&req.payload, Algorithm::Fake, 0)?;
+        let payload = Payload::split(&req.payload, Algorithm::Fake, req.flags)?;
+        let new_session_key = match keying {
+            Keying::Full => Some(session_key(&public_key)),
+            Keying::Session(key) => {
+                session::check_session_id(&payload.kem_block, key)?;
+                None
+            }
+        };
 
         // Always attempt both slots (mirrors the real cipher's timing rule).
         let a = split_slot(&payload.slot_a).ok().and_then(|s| {
@@ -156,10 +192,12 @@ impl Cipher for FakeCipher {
             (Some(text), _) => Ok(Opened {
                 text,
                 slot: Slot::B,
+                new_session_key,
             }),
             (None, Some(text)) => Ok(Opened {
                 text,
                 slot: Slot::A,
+                new_session_key,
             }),
             (None, None) => Err(PolyError::DecryptFailed),
         }
@@ -194,6 +232,8 @@ mod tests {
             decoy: Some("decoy".into()),
             passphrase: Some("pw".into()),
             aad: [0; 15],
+            flags: 0,
+            session_key: None,
         };
         assert_eq!(FakeCipher.seal(&req), FakeCipher.seal(&req));
     }

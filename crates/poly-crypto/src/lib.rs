@@ -2,13 +2,14 @@
 //!
 //! - [`FakeCipher`]: works today, NOT SECURE, for testing the pipeline.
 //! - [`MlKemCipher`]: ML-KEM-768 + AES-256-GCM. Post-quantum.
-//! - [`RsaCipher`]: RSA-2048-OAEP-SHA256 + AES-256-GCM. TODO role 1.
+//! - [`RsaCipher`]: RSA-2048-OAEP-SHA256 + AES-256-GCM. For comparison, not post-quantum.
 //!
 //! The format every cipher must produce is in `docs/SPEC.md` §Payload.
 
 mod fake;
 mod mlkem;
 mod rsa;
+mod session;
 mod slots;
 
 pub use fake::FakeCipher;

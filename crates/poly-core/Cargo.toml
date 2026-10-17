@@ -14,6 +14,8 @@ test-utils = ["dep:rand"]
 thiserror.workspace = true
 crc32fast.workspace = true
 sha2.workspace = true
+# Session id derivation (SPEC §3 "Session mode").
+hkdf.workspace = true
 rand = { workspace = true, optional = true }
 
 [dev-dependencies]

@@ -147,6 +147,10 @@ pub enum PolyError {
     DecryptFailed,
     #[error("this message is not addressed to this key")]
     WrongRecipient,
+    /// A session message whose session was never started on this device.
+    /// Show: "ask them to send a full message first".
+    #[error("unknown session: ask the sender to send a full message first")]
+    UnknownSession,
     #[error("crypto error: {reason}")]
     Crypto { reason: String },
     #[error("file is not in this carrier's format")]
@@ -185,6 +189,7 @@ impl From<poly_core::PolyError> for PolyError {
             E::InvalidKey(r) => Self::InvalidKey { reason: r.into() },
             E::DecryptFailed => Self::DecryptFailed,
             E::WrongRecipient => Self::WrongRecipient,
+            E::UnknownSession => Self::UnknownSession,
             E::Crypto(reason) => Self::Crypto { reason },
             E::NotThisCarrier => Self::NotThisCarrier,
             E::CarrierTooSmall { needed, available } => Self::CarrierTooSmall {
@@ -291,6 +296,7 @@ pub fn encrypt(request: EncryptRequest) -> Result<EncodedFile, PolyError> {
         algorithm: request.algorithm.into(),
         carrier: request.carrier.into(),
         options: request.options.into(),
+        session_key: None,
     })?;
     Ok(EncodedFile {
         bytes: file.bytes,
@@ -309,6 +315,7 @@ pub fn decrypt(request: DecryptRequest) -> Result<Decrypted, PolyError> {
         my_secret_key: request.my_secret_key,
         my_public_key: request.my_public_key,
         passphrase: request.passphrase,
+        session_keys: Vec::new(),
     })?;
     Ok(Decrypted {
         text: d.text,

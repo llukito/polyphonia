@@ -54,6 +54,10 @@ pub enum PolyError {
     /// The message is addressed to a different contact (contact_id mismatch).
     #[error("this message is not addressed to this key")]
     WrongRecipient,
+    /// A session message whose session id matches no stored session key
+    /// (e.g. the full message that started the session never arrived).
+    #[error("unknown session: ask the sender to send a full message first")]
+    UnknownSession,
     /// A cryptographic primitive failed unexpectedly.
     #[error("crypto error: {0}")]
     Crypto(String),
