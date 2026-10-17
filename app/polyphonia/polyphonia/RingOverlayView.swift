@@ -20,10 +20,10 @@ struct RingOverlayView: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onDismiss)
 
-      if !ringOptions.isEmpty {
+      if let selectedMedium, !ringOptions.isEmpty {
         SealOptionsRing(
-          options: ringOptions, isWorking: session.isWorking,
-          isAiWorking: session.isAiWorking,
+          medium: selectedMedium, options: ringOptions,
+          isWorking: session.isWorking || session.isAiWorking,
           isSelected: optionIsSelected, onSelect: selectOption)
           .position(RingLayout.center)
       }
@@ -32,8 +32,11 @@ struct RingOverlayView: View {
         leading: actions.leading, trailing: actions.trailing,
         isPresented: presentation.isPresented,
         isWorking: session.isWorking || session.isAiWorking,
+        utilities: utilityActions,
         showBranches: selectedMedium != nil,
         releaseRequest: presentation.releaseRequest,
+        onHoverChanged: updateMedium,
+        onOuterRelease: releaseOuterOption,
         onAction: perform
       ) { hovered in
         hub(hovered: hovered)
@@ -103,7 +106,36 @@ struct RingOverlayView: View {
     case .save: session.saveGeneratedFile()
     case .copy: session.copyOpenedText()
     case .done: onDismiss()
+    case .recipient: settingsPanel = .contacts
+    case .hidden: settingsPanel = .hidden
+    case .ai:
+      settingsPanel = .ai
+    case .cancelAi: session.cancelAiRequest()
+    case .sealFile:
+      if let selectedMedium { session.sealAndCopy(as: selectedMedium) }
+    case .passphrase: settingsPanel = .passphrase
+    case .back: session.show(.home)
+    case .guide: settingsPanel = .guide
     }
+  }
+
+  private func updateMedium(_ hovered: RingAction?) {
+    guard session.screen == .home else { return }
+    switch hovered {
+    case .sealImage: selectedMedium = .image
+    case .sealAudio: selectedMedium = .audio
+    case .open: selectedMedium = nil
+    default: break
+    }
+  }
+
+  private func releaseOuterOption(_ point: CGPoint) {
+    guard let selectedMedium else { return }
+    let offset = RingLayout.optionsOuterRadius - RingLayout.interactionDiameter / 2
+    let optionPoint = CGPoint(x: point.x + offset, y: point.y + offset)
+    if let option = SealOptionsRing.option(
+      at: optionPoint, medium: selectedMedium, options: ringOptions)
+    { selectOption(option) }
   }
 
   @ViewBuilder
@@ -218,10 +250,20 @@ struct RingOverlayView: View {
         options.append(.removeCover)
       }
       if selectedMedium == .image { options.append(.platform) }
-      options += [.recipient, .hidden]
-      if !session.aiServers.isEmpty || session.isAiWorking { options.append(.ai) }
-      options.append(.seal)
       return options
+    case .open, .result: return []
+    }
+  }
+
+  private var utilityActions: [RingAction] {
+    switch session.screen {
+    case .home:
+      guard selectedMedium != nil else { return [] }
+      var actions: [RingAction] = [.recipient, .hidden]
+      if session.isAiWorking { actions.append(.cancelAi) }
+      else if !session.aiServers.isEmpty { actions.append(.ai) }
+      actions.append(.sealFile)
+      return actions
     case .open: return [.passphrase, .back]
     case .result:
       return session.sendingGuide != nil || session.resendGuide != nil ? [.guide] : []
@@ -236,9 +278,6 @@ struct RingOverlayView: View {
     case .midi: session.audioFormat == .midi
     case .cover:
       selectedMedium == .image ? session.imageCover != nil : session.audioCover != nil
-    case .recipient: session.selectedContact != nil
-    case .hidden: session.hiddenMode
-    case .passphrase: !session.passphrase.isEmpty
     default: false
     }
   }
@@ -261,16 +300,6 @@ struct RingOverlayView: View {
       if selectedMedium == .image { session.removeImageCover() }
       else { session.removeAudioCover() }
     case .platform: settingsPanel = .platform
-    case .recipient: settingsPanel = .contacts
-    case .hidden: settingsPanel = .hidden
-    case .ai:
-      if session.isAiWorking { session.cancelAiRequest() }
-      else { settingsPanel = .ai }
-    case .seal:
-      if let selectedMedium { session.sealAndCopy(as: selectedMedium) }
-    case .passphrase: settingsPanel = .passphrase
-    case .back: session.show(.home)
-    case .guide: settingsPanel = .guide
     }
   }
 }

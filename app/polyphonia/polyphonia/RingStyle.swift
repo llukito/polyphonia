@@ -1,9 +1,9 @@
 import Foundation
 import SwiftUI
 
-/// Sizes follow the compact, two-action radial design. The cursor sits at the ring's center.
+/// Sizes follow the compact radial design. The cursor sits at the ring's center.
 enum RingLayout {
-  // The canvas holds the compact third ring without a control stack below it.
+  // The canvas holds the contextual outer arc without a control stack below it.
   static let canvasWidth: CGFloat = 650
   static let canvasHeight: CGFloat = 650
   static let centerY: CGFloat = canvasHeight / 2
@@ -59,7 +59,7 @@ enum RingLayout {
   static var diameter: CGFloat { outerRadius * 2 }
 
   static func frame(around cursor: CGPoint, inside bounds: CGRect) -> CGRect {
-    // Reserve the third layer once so opening it never moves the ring under the pointer.
+    // Reserve the outer arc once so opening it never moves the ring under the pointer.
     let margin = optionsOuterRadius + shadowRadius
     let adjustedX = fitted(
       cursor.x, minimum: bounds.minX + margin, maximum: bounds.maxX - margin)

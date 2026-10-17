@@ -6,8 +6,10 @@ The ring uses native glass, spring motion, and a quieter animation when macOS
 Reduce Motion is enabled.
 
 - **Seal** expands into a second layer on the left: **Image** above and **Audio**
-  below. Choose either child to open a compact third layer around the ring.
-  It holds format, cover, recipient, hidden mode, local AI, and **Seal file**.
+  below. Hover either child to open a short third-layer arc beside it. Image
+  shows Stealth, Robust, Upload and Platform; Audio shows WAV, MIDI and Upload.
+  When a cover is selected, that arc also shows Remove. The shared Recipient,
+  Hidden, Local AI and Seal file actions sit on the second layer at the right.
 - Press in the hub, drag toward an action, and release to choose it. Continue
   dragging through Seal to Image or Audio in the same gesture. A release in the
   hub or a divider gap cancels. Clicking the visible choices also works.
@@ -15,8 +17,8 @@ Reduce Motion is enabled.
   toward a choice and release the shortcut to choose it. Some editors need the
   shortcut released before selection capture can finish; use a mouse drag once
   the ring appears in those apps.
-- **Open** offers **Paste file** from the clipboard or **Browse**. Its outer
-  layer has an optional passphrase action; files can also be dropped onto the ring.
+- **Open** offers **Paste file** from the clipboard or **Browse**. Passphrase
+  and Back appear on the second layer; files can also be dropped onto the ring.
 - **Escape**, **Command + W**, an outside click, or the shortcut again closes
   the ring. **Command + Q** quits while the ring is active. The small close
   button also has a Quit action in its context menu.
@@ -52,16 +54,16 @@ compatible with files encrypted for a different algorithm or recipient. Although
 Rust now includes ML-KEM, this frontend deliberately keeps its existing Fake
 contacts and Keychain identity until the end-to-end encryption integration is ready.
 
-For your own image, choose **Seal → Image → Cover** and pick a PNG or JPEG.
-The Cover action selects Stealth, which is the mode that supports custom images.
+For your own image, choose **Seal → Image → Upload** and pick a PNG or JPEG.
+Upload selects Stealth, which is the mode that supports custom images.
 Rust embeds the message in a new PNG without overwriting the original. Choose
-**Cover** again to replace it or **Remove** to restore a generated image. The
+**Upload** again to replace it or **Remove** to restore a generated image. The
 choice lasts for the current ring session. Robust uses its generated grid.
 
-For your own music, choose **Seal → Audio → Cover** and pick a 16-bit PCM WAV.
-The Cover action selects WAV. Rust embeds the message in a
+For your own music, choose **Seal → Audio → Upload** and pick a 16-bit PCM WAV.
+Upload selects WAV. Rust embeds the message in a
 new WAV while preserving the cover's length, sample rate, and channel count;
-the original is never overwritten. Choose **Cover** again to replace it or
+the original is never overwritten. Choose **Upload** again to replace it or
 **Remove** to restore generated music. The choice lasts for the current ring
 session. MIDI always generates its own music.
 If the WAV is too short, choose a longer one or shorten the message. Other WAV
@@ -87,15 +89,15 @@ The app bundles the canonical `profiles/platforms.json` from the repository:
 - A received file with `ChecksumMismatch` shows the compression error and offers
   that platform's Stealth steps for resending as a file/document.
 
-The third layer replaces the old scrolling controls. Recipient, platform, hidden
-message, and passphrase actions open focused cards for lists or text entry.
+The ring replaces the old scrolling controls. Recipient, Platform, Hidden and
+Passphrase actions open focused cards for lists or text entry.
 App detection does not use browser history, inspect other
 tabs, or request Automation permission. No selected text, keys, passphrases or URLs
 are logged.
 
 ## Local AI
 
-When LM Studio or Ollama is running with a model, the third ring shows **Local AI**.
+When LM Studio or Ollama is running with a model, the second layer shows **Local AI**.
 Choose a model, then **Shorten message** or **Generate decoy**. The model runs
 locally; the app shows its suggestion beside the original for approval or editing.
 No suggestion replaces your text automatically. A decoy shows the byte range that
@@ -123,7 +125,7 @@ installed, with Cargo available in `CARGO_HOME/bin` or `~/.cargo/bin`.
 
 ## Try the carriers
 
-1. Run the **polyphonia** scheme in Xcode. Choose **Recipient** in the outer ring
+1. Run the **polyphonia** scheme in Xcode. Choose **Recipient** in the second layer
    and select **This Mac · demo identity** to receive your own file.
 2. Select a short message in another app, then press **Command + Shift + P**.
 3. Choose Seal → Image, select a mode in the third ring, then **Seal file**. Paste

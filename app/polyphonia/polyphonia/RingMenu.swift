@@ -7,9 +7,12 @@ struct RingMenu<Hub: View>: View {
   let trailing: RingAction
   let isPresented: Bool
   let isWorking: Bool
+  var utilities: [RingAction] = []
   var showBranches = false
   var releaseRequest: RingReleaseRequest? = nil
   var onExpansionChanged: (Bool) -> Void = { _ in }
+  var onHoverChanged: (RingAction?) -> Void = { _ in }
+  var onOuterRelease: (CGPoint) -> Void = { _ in }
   let onAction: (RingAction) -> Void
   @ViewBuilder var hub: (RingAction?) -> Hub
 
@@ -31,6 +34,19 @@ struct RingMenu<Hub: View>: View {
           .scale(scale: RingLayout.collapsedScale, anchor: .trailing).combined(with: .opacity))
       }
 
+      ForEach(Array(utilities.enumerated()), id: \.element.id) { index, action in
+        let angles = RingUtilityArc.angles(for: index, count: utilities.count)
+        let middle = (angles.lowerBound + angles.upperBound) / 2 * .pi / 180
+        RingTile(
+          action: action, shape: RingUtilitySector(index: index, count: utilities.count),
+          diameter: RingLayout.interactionDiameter,
+          labelOffset: CGSize(
+            width: cos(middle) * RingLayout.branchLabelRadius,
+            height: sin(middle) * RingLayout.branchLabelRadius),
+          tint: RingColor.open, isHighlighted: interaction.hoveredAction == action,
+          isWorking: isWorking && action != .cancelAi, onAction: { onAction(action) })
+      }
+
       sector(action: leading, side: .left, tint: RingColor.seal)
       sector(action: trailing, side: .right, tint: RingColor.open)
 
@@ -40,16 +56,17 @@ struct RingMenu<Hub: View>: View {
         .gesture(
           DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { value in
-              guard isPresented, !isWorking else { return }
+              guard isPresented, !isWorking || utilities.contains(.cancelAi) else { return }
               isDragging = true
-              interaction.update(at: value.location, leading: leading, trailing: trailing)
+              interaction.update(
+                at: value.location, leading: leading, trailing: trailing, utilities: utilities)
             }
             .onEnded { value in
               isDragging = false
               release(at: value.location)
             }
         )
-        .allowsHitTesting(isPresented && !isWorking)
+        .allowsHitTesting(isPresented && (!isWorking || utilities.contains(.cancelAi)))
         .accessibilityHidden(true)
 
       hub(interaction.hoveredAction)
@@ -64,9 +81,10 @@ struct RingMenu<Hub: View>: View {
     }
     .frame(width: RingLayout.interactionDiameter, height: RingLayout.interactionDiameter)
     .onContinuousHover(coordinateSpace: .local) { phase in
-      guard isPresented, !isWorking else { return }
+      guard isPresented, !isWorking || utilities.contains(.cancelAi) else { return }
       switch phase {
-      case .active(let point): interaction.update(at: point, leading: leading, trailing: trailing)
+      case .active(let point):
+        interaction.update(at: point, leading: leading, trailing: trailing, utilities: utilities)
       case .ended:
         if !isDragging { interaction.reset() }
       }
@@ -94,15 +112,25 @@ struct RingMenu<Hub: View>: View {
     .onChange(of: interaction.isSealExpanded) { _, expanded in
       onExpansionChanged(expanded)
     }
+    .onChange(of: interaction.hoveredAction) { _, hovered in
+      onHoverChanged(hovered)
+    }
     .onChange(of: releaseRequest) { _, request in
       if let request { release(at: request.location) }
     }
   }
 
   private func release(at location: CGPoint) {
-    guard isPresented, !isWorking else { return }
-    if let action = interaction.release(at: location, leading: leading, trailing: trailing) {
-      onAction(action)
+    guard isPresented, !isWorking || utilities.contains(.cancelAi) else { return }
+    let center = RingLayout.interactionDiameter / 2
+    if hypot(location.x - center, location.y - center) >= RingLayout.optionsInnerRadius {
+      onOuterRelease(location)
+      return
+    }
+    if let action = interaction.release(
+      at: location, leading: leading, trailing: trailing, utilities: utilities)
+    {
+      if !isWorking || action == .cancelAi { onAction(action) }
     }
   }
 

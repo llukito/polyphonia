@@ -1,8 +1,7 @@
 import SwiftUI
 
 enum RingOption: String, Identifiable {
-  case stealth, robust, wav, midi, cover, removeCover, platform, recipient, hidden, ai, seal
-  case passphrase, back, guide
+  case stealth, robust, wav, midi, cover, removeCover, platform
 
   var id: String { rawValue }
 
@@ -12,16 +11,9 @@ enum RingOption: String, Identifiable {
     case .robust: "Robust"
     case .wav: "WAV"
     case .midi: "MIDI"
-    case .cover: "Cover"
+    case .cover: "Upload"
     case .removeCover: "Remove"
     case .platform: "Platform"
-    case .recipient: "Recipient"
-    case .hidden: "Hidden"
-    case .ai: "Local AI"
-    case .seal: "Seal file"
-    case .passphrase: "Passphrase"
-    case .back: "Back"
-    case .guide: "Send steps"
     }
   }
 
@@ -32,49 +24,49 @@ enum RingOption: String, Identifiable {
     case .cover: "square.and.arrow.up"
     case .removeCover: "xmark.circle"
     case .platform: "paperplane"
-    case .recipient: "person.crop.circle"
-    case .hidden: "eye.slash"
-    case .ai: "sparkles"
-    case .seal: "lock.fill"
-    case .passphrase: "key"
-    case .back: "arrow.uturn.backward"
-    case .guide: "list.bullet"
     }
   }
 }
 
+/// A short outer arc follows the active Image or Audio branch.
 struct SealOptionsRing: View {
+  // A small angular seam keeps adjacent outer options distinct on hover.
+  private static let optionGap: Double = 1.6
+  let medium: SealMedium
   let options: [RingOption]
   let isWorking: Bool
-  let isAiWorking: Bool
   let isSelected: (RingOption) -> Bool
   let onSelect: (RingOption) -> Void
+
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var hoveredOption: RingOption?
 
   var body: some View {
     ZStack {
       ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
-        let span = 360.0 / Double(options.count)
-        let start = -90.0 + Double(index) * span
-        let shape = RingOptionSector(start: start + 1.5, end: start + span - 1.5)
-        let angle = (start + span / 2) * .pi / 180
+        let angles = Self.angles(medium: medium, index: index, count: options.count)
+        let shape = RingOptionSector(start: angles.lowerBound, end: angles.upperBound)
+        let angle = (angles.lowerBound + angles.upperBound) / 2 * .pi / 180
+        let highlighted = hoveredOption == option
         Button { onSelect(option) } label: {
           ZStack {
             RingGlass()
               .overlay(RingColor.smoke)
-              .overlay(isSelected(option) ? RingColor.seal.opacity(0.17) : .clear)
+              .overlay(
+                RingColor.seal.opacity(highlighted ? 0.24 : isSelected(option) ? 0.17 : 0))
               .clipShape(shape)
             shape.strokeBorder(
-              isSelected(option) ? RingColor.seal : RingColor.edge,
+              highlighted || isSelected(option) ? RingColor.seal : RingColor.edge,
               lineWidth: RingLayout.hairline)
             VStack(spacing: 2) {
-              Image(systemName: isAiWorking && option == .ai ? "xmark.circle" :
-                    isSelected(option) ? "checkmark.circle.fill" : option.symbol)
-                .font(.system(size: 14))
-              Text(isAiWorking && option == .ai ? "Cancel AI" : option.title)
+              Image(systemName: isSelected(option) ? "checkmark.circle.fill" : option.symbol)
+                .font(.system(size: 13))
+              Text(option.title)
                 .font(.system(size: 9, weight: .medium))
                 .lineLimit(1)
             }
-            .foregroundStyle(isSelected(option) ? RingColor.seal : RingColor.ink)
+            .foregroundStyle(highlighted || isSelected(option) ? RingColor.seal : RingColor.ink)
+            .scaleEffect(highlighted && !reduceMotion ? RingLayout.labelHoverScale : 1)
             .offset(
               x: cos(angle) * RingLayout.optionsLabelRadius,
               y: sin(angle) * RingLayout.optionsLabelRadius)
@@ -84,14 +76,76 @@ struct SealOptionsRing: View {
           .contentShape(shape)
         }
         .buttonStyle(.plain)
-        .disabled(isWorking || (isAiWorking && option != .ai))
-        .accessibilityLabel(isAiWorking && option == .ai ? "Cancel local AI request" : option.title)
+        .disabled(isWorking)
+        .allowsHitTesting(false)
+        .accessibilityLabel(option.title)
         .accessibilityAddTraits(isSelected(option) ? [.isSelected] : [])
+        .offset(
+          x: highlighted && !reduceMotion ? cos(angle) * RingLayout.hoverLift : 0,
+          y: highlighted && !reduceMotion ? sin(angle) * RingLayout.hoverLift : 0)
+        .animation(reduceMotion ? RingMotion.reduced : RingMotion.hover, value: highlighted)
       }
+
+      Color.clear
+        .contentShape(RingOptionHitShape(medium: medium, count: options.count))
+        .onContinuousHover(coordinateSpace: .local) { phase in
+          switch phase {
+          case .active(let point): hoveredOption = option(at: point)
+          case .ended: hoveredOption = nil
+          }
+        }
+        .gesture(
+          DragGesture(minimumDistance: 0, coordinateSpace: .local)
+            .onChanged { hoveredOption = option(at: $0.location) }
+            .onEnded { point in
+              if let option = option(at: point.location) { onSelect(option) }
+            })
+        .allowsHitTesting(!isWorking)
+        .accessibilityHidden(true)
     }
     .frame(width: RingLayout.optionsOuterRadius * 2,
            height: RingLayout.optionsOuterRadius * 2)
-    .transition(.scale(scale: 0.94).combined(with: .opacity))
+    .transition(.scale(scale: 0.96).combined(with: .opacity))
+  }
+
+  func option(at point: CGPoint) -> RingOption? {
+    Self.option(at: point, medium: medium, options: options)
+  }
+
+  static func option(
+    at point: CGPoint, medium: SealMedium, options: [RingOption]
+  ) -> RingOption? {
+    let center = RingLayout.optionsOuterRadius
+    let radius = hypot(point.x - center, point.y - center)
+    guard radius >= RingLayout.optionsInnerRadius,
+      radius <= RingLayout.optionsOuterRadius + RingLayout.hoverLift
+    else { return nil }
+    let angle = atan2(point.y - center, point.x - center) * 180 / .pi
+    return options.enumerated().first {
+      angles(medium: medium, index: $0.offset, count: options.count).contains(angle)
+    }?.element
+  }
+
+  static func angles(medium: SealMedium, index: Int, count: Int) -> ClosedRange<Double> {
+    let branch = medium == .image ? RingBranch.image : RingBranch.audio
+    let range = branch.angles
+    let span = (range.upperBound - range.lowerBound) / Double(count)
+    let lower = range.lowerBound + Double(index) * span + optionGap / 2
+    return lower...(lower + span - optionGap)
+  }
+}
+
+private struct RingOptionHitShape: Shape {
+  let medium: SealMedium
+  let count: Int
+
+  func path(in rect: CGRect) -> Path {
+    var path = Path()
+    for index in 0..<count {
+      let angles = SealOptionsRing.angles(medium: medium, index: index, count: count)
+      path.addPath(RingOptionSector(start: angles.lowerBound, end: angles.upperBound).path(in: rect))
+    }
+    return path
   }
 }
 
