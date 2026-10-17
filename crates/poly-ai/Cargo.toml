@@ -1,0 +1,22 @@
+[package]
+name = "poly-ai"
+description = "Optional local AI helpers (shorten, decoy) via a loopback-only LLM server (role 5)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "poly-ai-eval"
+path = "src/bin/poly-ai-eval.rs"
+
+[dependencies]
+poly-core.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+# Small blocking HTTP client. No default features: plain http only (no TLS,
+# no gzip), since we only ever talk to a loopback server.
+ureq = { version = "3.4.2", default-features = false }
