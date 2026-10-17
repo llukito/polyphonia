@@ -28,6 +28,8 @@ rsa = "0.9.10"
 aes-gcm = "0.11.1"
 hkdf = "0.13.0"
 argon2 = "0.6.0"
+# Wipes secrets (keys, seeds, plaintext buffers) from memory when they go out of scope.
+zeroize = "1.9.1"
 
 # Image (role 2)
 image = "0.25.10"

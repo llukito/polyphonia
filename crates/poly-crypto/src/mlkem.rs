@@ -7,10 +7,13 @@
 
 use ml_kem::array::{AssocArraySize, typenum::Unsigned};
 use ml_kem::ml_kem_768::{Ciphertext, DecapsulationKey, EncapsulationKey};
-use ml_kem::{Decapsulate, Encapsulate, Kem, Key, KeyExport, KeySizeUser, MlKem768, Seed};
+use ml_kem::{
+    Decapsulate, Encapsulate, Kem, Key, KeyExport, KeySizeUser, MlKem768, Seed, SharedKey,
+};
 use poly_core::payload::{KEM_BLOCK_LEN_MLKEM768, Payload};
 use poly_core::{Algorithm, Cipher, Identity, OpenRequest, Opened, PolyError, SealRequest};
 use rand::Rng;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::slots::{self, SharedSecret};
 
@@ -42,10 +45,20 @@ fn public_key(bytes: &[u8]) -> Result<EncapsulationKey, PolyError> {
 }
 
 /// Rebuild the decapsulation key from its 64-byte seed.
+/// (With ml-kem's `zeroize` feature the key wipes itself when dropped.)
 fn secret_key(bytes: &[u8]) -> Result<DecapsulationKey, PolyError> {
-    let seed = Seed::try_from(bytes)
-        .map_err(|_| PolyError::InvalidKey("ML-KEM-768 secret key must be a 64-byte seed"))?;
-    Ok(DecapsulationKey::from_seed(seed))
+    let seed = Zeroizing::new(
+        Seed::try_from(bytes)
+            .map_err(|_| PolyError::InvalidKey("ML-KEM-768 secret key must be a 64-byte seed"))?,
+    );
+    Ok(DecapsulationKey::from_seed(*seed))
+}
+
+/// Copy the KEM's shared key into a wiping [`SharedSecret`] and wipe the original.
+fn shared_secret(mut key: SharedKey) -> SharedSecret {
+    let shared: SharedSecret = Zeroizing::new(key.into());
+    key.zeroize();
+    shared
 }
 
 impl Cipher for MlKemCipher {
@@ -54,9 +67,9 @@ impl Cipher for MlKemCipher {
     }
 
     fn generate_identity(&self) -> Result<Identity, PolyError> {
-        let mut seed = [0u8; MLKEM768_SEED_LEN];
-        rand::rng().fill_bytes(&mut seed);
-        let dk = secret_key(&seed)?;
+        let mut seed = Zeroizing::new([0u8; MLKEM768_SEED_LEN]);
+        rand::rng().fill_bytes(&mut seed[..]);
+        let dk = secret_key(&seed[..])?;
         Ok(Identity {
             public_key: dk.encapsulation_key().to_bytes().to_vec(),
             secret_key: seed.to_vec(),
@@ -67,7 +80,7 @@ impl Cipher for MlKemCipher {
         let mode = slots::mode(req)?;
         let (kem_block, shared) =
             public_key(&req.recipient_public_key)?.encapsulate_with_rng(&mut rand::rng());
-        let shared: SharedSecret = shared.into();
+        let shared = shared_secret(shared);
         let (slot_a, slot_b) = slots::seal_slots(&shared, req, mode)?;
         Ok(Payload {
             kem_block: kem_block.to_vec(),
@@ -84,7 +97,7 @@ impl Cipher for MlKemCipher {
             .map_err(|_| PolyError::MalformedPayload("ML-KEM-768 kem_block must be 1088 bytes"))?;
         // Never fails: a tampered kem_block gives a different S (implicit
         // rejection), so slot A then fails to open with DecryptFailed.
-        let shared: SharedSecret = dk.decapsulate(&kem_block).into();
+        let shared = shared_secret(dk.decapsulate(&kem_block));
         slots::open_slots(&shared, &payload.slot_a, &payload.slot_b, req)
     }
 }

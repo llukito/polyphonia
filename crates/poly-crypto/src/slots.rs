@@ -11,7 +11,8 @@
 //! ```
 
 use aes_gcm::Aes256Gcm;
-use aes_gcm::aead::{Aead, KeyInit, Nonce, Payload as AeadInput};
+use aes_gcm::aead::array::typenum::Unsigned;
+use aes_gcm::aead::{Aead, Key, KeyInit, KeySizeUser, Nonce, Payload as AeadInput};
 use argon2::{Argon2, Params, Version};
 use hkdf::Hkdf;
 use poly_core::payload::{
@@ -22,9 +23,11 @@ use poly_core::{
 };
 use rand::Rng;
 use sha2::Sha256;
+use zeroize::Zeroizing;
 
 /// AES-256 key length: 256 bits = 32 bytes (FIPS 197).
 const AES_KEY_LEN: usize = 32;
+const _: () = assert!(<Aes256Gcm as KeySizeUser>::KeySize::USIZE == AES_KEY_LEN);
 
 /// Argon2id memory cost in KiB: 19,456 KiB = 19 MiB (SPEC §3, OWASP minimum recommendation).
 const ARGON2_MEMORY_KIB: u32 = 19_456;
@@ -36,10 +39,12 @@ const ARGON2_PARALLELISM: u32 = 1;
 const ARGON2_OUTPUT_LEN: usize = 32;
 
 /// The 32-byte shared secret S from the KEM (or the RSA-wrapped random value).
-pub(crate) type SharedSecret = [u8; SHARED_SECRET_LEN];
+/// Wiped from memory when dropped.
+pub(crate) type SharedSecret = Zeroizing<[u8; SHARED_SECRET_LEN]>;
 
-/// A 32-byte AES-256-GCM key derived from S.
-type SlotKey = [u8; AES_KEY_LEN];
+/// A 32-byte AES-256-GCM key derived from S, in the cipher's own key type so
+/// it is never copied into an unwiped buffer. Wiped from memory when dropped.
+type SlotKey = Zeroizing<Key<Aes256Gcm>>;
 
 /// What goes into the two slots, after checking the request.
 #[derive(Clone, Copy)]
@@ -64,9 +69,9 @@ pub(crate) fn mode(req: &SealRequest) -> Result<Mode<'_>, PolyError> {
 
 /// key_A = HKDF-SHA256(ikm = S, salt = none, info = "polyphonia/v1/slot-a").
 fn key_a(shared: &SharedSecret) -> Result<SlotKey, PolyError> {
-    let mut key = [0u8; AES_KEY_LEN];
-    Hkdf::<Sha256>::new(None, shared)
-        .expand(HKDF_INFO_SLOT_A, &mut key)
+    let mut key = SlotKey::default();
+    Hkdf::<Sha256>::new(None, &shared[..])
+        .expand(HKDF_INFO_SLOT_A, &mut key[..])
         .map_err(|_| PolyError::Crypto("HKDF expand failed".into()))?;
     Ok(key)
 }
@@ -84,14 +89,14 @@ fn key_b(
         Some(ARGON2_OUTPUT_LEN),
     )
     .map_err(|_| PolyError::Crypto("bad Argon2id parameters".into()))?;
-    let mut stretched = [0u8; ARGON2_OUTPUT_LEN];
+    let mut stretched = Zeroizing::new([0u8; ARGON2_OUTPUT_LEN]);
     Argon2::new(argon2::Algorithm::Argon2id, Version::V0x13, params)
-        .hash_password_into(passphrase.as_bytes(), contact_id, &mut stretched)
+        .hash_password_into(passphrase.as_bytes(), contact_id, &mut stretched[..])
         .map_err(|_| PolyError::Crypto("Argon2id failed".into()))?;
 
-    let mut key = [0u8; AES_KEY_LEN];
-    Hkdf::<Sha256>::new(Some(&stretched), shared)
-        .expand(HKDF_INFO_SLOT_B, &mut key)
+    let mut key = SlotKey::default();
+    Hkdf::<Sha256>::new(Some(&stretched[..]), &shared[..])
+        .expand(HKDF_INFO_SLOT_B, &mut key[..])
         .map_err(|_| PolyError::Crypto("HKDF expand failed".into()))?;
     Ok(key)
 }
@@ -102,7 +107,7 @@ fn encrypt_slot(key: &SlotKey, padded: &[u8], aad: &[u8]) -> Result<Vec<u8>, Pol
     let mut nonce = [0u8; NONCE_LEN];
     rand::rng().fill_bytes(&mut nonce);
 
-    let ciphertext_and_tag = Aes256Gcm::new(&(*key).into())
+    let ciphertext_and_tag = Aes256Gcm::new(key)
         .encrypt(
             &Nonce::<Aes256Gcm>::from(nonce),
             AeadInput { msg: padded, aad },
@@ -116,11 +121,12 @@ fn encrypt_slot(key: &SlotKey, padded: &[u8], aad: &[u8]) -> Result<Vec<u8>, Pol
 }
 
 /// Decrypt one slot. `None` if the tag doesn't verify or the plaintext is malformed.
-fn open_slot(key: &SlotKey, slot: &[u8], aad: &[u8]) -> Option<String> {
+/// The text is returned in a wiping wrapper so a slot that isn't used is wiped.
+fn open_slot(key: &SlotKey, slot: &[u8], aad: &[u8]) -> Option<Zeroizing<String>> {
     let (nonce, ciphertext_and_tag) = slot.split_at_checked(NONCE_LEN)?;
     let nonce = Nonce::<Aes256Gcm>::try_from(nonce).ok()?;
     // AES-GCM checks the tag in constant time before returning any plaintext.
-    let padded = Aes256Gcm::new(&(*key).into())
+    let padded = Aes256Gcm::new(key)
         .decrypt(
             &nonce,
             AeadInput {
@@ -128,8 +134,9 @@ fn open_slot(key: &SlotKey, slot: &[u8], aad: &[u8]) -> Option<String> {
                 aad,
             },
         )
+        .map(Zeroizing::new)
         .ok()?;
-    slot_unpad(&padded).ok()
+    slot_unpad(&padded).ok().map(Zeroizing::new)
 }
 
 /// Build slot A and slot B (equal length) for a checked request.
@@ -145,13 +152,17 @@ pub(crate) fn seal_slots(
     // Both slots are padded to the size of the longer text, so they are equal length.
     let padded = padded_len(slot_a_text.len().max(req.message.len()));
 
-    let slot_a = encrypt_slot(&key_a(shared)?, &slot_pad(slot_a_text, padded)?, &req.aad)?;
+    let plaintext_a = Zeroizing::new(slot_pad(slot_a_text, padded)?);
+    let slot_a = encrypt_slot(&key_a(shared)?, &plaintext_a, &req.aad)?;
     let slot_b = match mode {
-        Mode::Hidden { passphrase, .. } => encrypt_slot(
-            &key_b(shared, passphrase, &req.contact_id)?,
-            &slot_pad(&req.message, padded)?,
-            &req.aad,
-        )?,
+        Mode::Hidden { passphrase, .. } => {
+            let plaintext_b = Zeroizing::new(slot_pad(&req.message, padded)?);
+            encrypt_slot(
+                &key_b(shared, passphrase, &req.contact_id)?,
+                &plaintext_b,
+                &req.aad,
+            )?
+        }
         Mode::Normal => {
             // Random bytes look exactly like a real encrypted slot of the same length.
             let mut random = vec![0u8; slot_len(padded)];
@@ -180,13 +191,15 @@ pub(crate) fn open_slots(
     });
     let a = open_slot(&key_a(shared)?, slot_a, &req.aad);
 
+    // The winning text moves out of its wrapper into `Opened` (a poly-core
+    // type, not wiped); the other slot's text is wiped when `a`/`b` drop.
     match (b, a) {
-        (Some(text), _) => Ok(Opened {
-            text,
+        (Some(mut text), _) => Ok(Opened {
+            text: std::mem::take(&mut *text),
             slot: Slot::B,
         }),
-        (None, Some(text)) => Ok(Opened {
-            text,
+        (None, Some(mut text)) => Ok(Opened {
+            text: std::mem::take(&mut *text),
             slot: Slot::A,
         }),
         (None, None) => Err(PolyError::DecryptFailed),

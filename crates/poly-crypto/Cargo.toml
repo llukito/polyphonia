@@ -11,11 +11,12 @@ poly-core.workspace = true
 sha2.workspace = true
 rand.workspace = true
 # Used by the real ciphers (role 1); rsa is not used until RsaCipher is implemented.
-ml-kem.workspace = true
+ml-kem = { workspace = true, features = ["zeroize"] }
 rsa.workspace = true
-aes-gcm.workspace = true
+aes-gcm = { workspace = true, features = ["zeroize"] }
 hkdf.workspace = true
-argon2.workspace = true
+argon2 = { workspace = true, features = ["zeroize"] }
+zeroize.workspace = true
 
 [dev-dependencies]
 poly-core = { workspace = true, features = ["test-utils"] }
