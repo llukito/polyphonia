@@ -44,7 +44,7 @@ final class PolyphoniaService: @unchecked Sendable {
 
   func seal(
     message: String, recipientPublicKey: Data, decoy: String?, passphrase: String?,
-    carrier: CarrierKind
+    carrier: CarrierKind, coverImage: Data? = nil
   ) throws
     -> SealedCarrier
   {
@@ -57,7 +57,7 @@ final class PolyphoniaService: @unchecked Sendable {
         // Keep the existing demo identity until real encryption and contact migration are ready.
         algorithm: .fake,
         carrier: carrier,
-        options: CarrierOptions()
+        options: CarrierOptions(coverImage: carrier == .stealthPng ? coverImage : nil)
       ))
     let fileURL = FileManager.default.temporaryDirectory
       .appendingPathComponent("Polyphonia-\(UUID().uuidString)")

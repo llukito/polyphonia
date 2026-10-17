@@ -17,6 +17,7 @@ final class MessageSession: ObservableObject {
   @Published var passphrase = ""
   @Published var hiddenMode = false
   @Published var audioFormat: AudioFormat = .wav
+  @Published private(set) var imageCover: ImageCover?
   @Published var isWorking = false
   @Published var statusMessage: String?
   @Published private(set) var resultText: String?
@@ -62,6 +63,7 @@ final class MessageSession: ObservableObject {
     statusMessage = selection.issue?.message
     resultText = nil
     fileSummary = nil
+    imageCover = nil
     screen = .home
   }
 
@@ -69,6 +71,28 @@ final class MessageSession: ObservableObject {
     statusMessage = nil
     resendGuide = nil
     self.screen = screen
+  }
+
+  func selectImageCover(fileURL: URL) {
+    guard !isWorking else { return }
+    isWorking = true
+    statusMessage = nil
+    Task {
+      defer { isWorking = false }
+      do {
+        imageCover = try await Task.detached(priority: .userInitiated) {
+          try ImageCover.read(from: fileURL)
+        }.value
+      } catch {
+        statusMessage = "Could not read that cover image. Choose another PNG or JPEG."
+      }
+    }
+  }
+
+  func removeImageCover() {
+    guard !isWorking else { return }
+    imageCover = nil
+    statusMessage = nil
   }
 
   func sealAndCopy(as medium: SealMedium) {
@@ -105,6 +129,7 @@ final class MessageSession: ObservableObject {
     let decoyMessage = hiddenMode ? decoy : nil
     let hiddenPassphrase = hiddenMode ? passphrase : nil
     let recipientPublicKey = contact.publicKey
+    let coverBytes = selectedCarrier == .stealthPng ? imageCover?.bytes : nil
     let backend = service
     statusMessage = nil
     resendGuide = nil
@@ -115,7 +140,8 @@ final class MessageSession: ObservableObject {
         let carrier = try await Task.detached(priority: .userInitiated) {
           try backend.seal(
             message: realMessage, recipientPublicKey: recipientPublicKey,
-            decoy: decoyMessage, passphrase: hiddenPassphrase, carrier: selectedCarrier)
+            decoy: decoyMessage, passphrase: hiddenPassphrase, carrier: selectedCarrier,
+            coverImage: coverBytes)
         }.value
         let fileURL = carrier.fileURL
 
@@ -141,7 +167,8 @@ final class MessageSession: ObservableObject {
       } catch PolyError.NotImplemented {
         statusMessage = "\(medium.title) sealing is not available in the current backend yet."
       } catch {
-        statusMessage = FriendlyError.message(for: error, sealing: true)
+        statusMessage = FriendlyError.message(
+          for: error, sealing: true, usingCover: coverBytes != nil)
       }
       isWorking = false
     }
@@ -335,7 +362,7 @@ extension Data {
 }
 
 private enum FriendlyError {
-  static func message(for error: Error, sealing: Bool = false) -> String {
+  static func message(for error: Error, sealing: Bool = false, usingCover: Bool = false) -> String {
     guard let coreError = error as? PolyError else {
       if error is CocoaError { return "The file could not be read or saved." }
       return "Polyphonia could not finish that action. Please try again."
@@ -354,11 +381,15 @@ private enum FriendlyError {
       return "That demo option is not ready yet: \(what)"
     case .CarrierTooSmall(let needed, let available):
       return "This carrier fits \(available) bytes, but the message envelope needs \(needed). "
-        + "Try a shorter message or Stealth PNG."
+        + (usingCover
+          ? "Choose a larger image, remove the cover, or shorten the message."
+          : "Try a shorter message or Stealth PNG.")
     case .MessageTooLong:
       return "This message is too long. Select a shorter message and try again."
     case .Carrier where sealing:
-      return "Could not generate this carrier. Try a shorter message or another format."
+      return usingCover
+        ? "Could not use this cover image. Choose another PNG or JPEG."
+        : "Could not generate this carrier. Try a shorter message or another format."
     default:
       return sealing
         ? "Polyphonia could not create this carrier. Please try again."

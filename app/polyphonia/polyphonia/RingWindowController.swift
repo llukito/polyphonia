@@ -51,7 +51,8 @@ final class RingWindowController {
         onDismiss: { [weak self] in self?.dismiss() },
         onQuit: { NSApp.terminate(nil) },
         onBrowse: { [weak self] in self?.browseReceivedFile() },
-        onImportContact: { [weak self] in self?.browsePublicKey() }))
+        onImportContact: { [weak self] in self?.browsePublicKey() },
+        onChooseCover: { [weak self] in self?.browseImageCover() }))
     geometrySubscription = presentation.$accessoryHeight.removeDuplicates().sink {
       [weak self] height in
       self?.positionAtAnchor(accessoryHeight: height)
@@ -118,6 +119,13 @@ final class RingWindowController {
     chooseFile(title: "Import a contact public key", prompt: "Import", types: [.data]) {
       [weak self] url in
       self?.session.importContact(fileURL: url)
+    }
+  }
+
+  private func browseImageCover() {
+    chooseFile(title: "Choose a cover image", prompt: "Use image", types: [.png, .jpeg]) {
+      [weak self] url in
+      self?.session.selectImageCover(fileURL: url)
     }
   }
 

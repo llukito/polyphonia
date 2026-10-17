@@ -7,6 +7,7 @@ struct RingOverlayView: View {
   let onQuit: () -> Void
   let onBrowse: () -> Void
   let onImportContact: () -> Void
+  let onChooseCover: () -> Void
 
   @State private var accessoryContentHeight = RingLayout.fieldHeight
   @State private var isSealExpanded = false
@@ -193,6 +194,9 @@ struct RingOverlayView: View {
         .background { accessoryGlass }
 
         PlatformControls(selection: session.platformSelection)
+        ImageCoverControls(
+          selection: session.platformSelection, coverName: session.imageCover?.name,
+          onChoose: onChooseCover, onRemove: session.removeImageCover)
         AudioFormatPicker(selection: $session.audioFormat)
 
         if session.hiddenMode {

@@ -53,6 +53,13 @@ compatible with files encrypted for a different algorithm or recipient. Although
 Rust now includes ML-KEM, this frontend deliberately keeps its existing Fake
 contacts and Keychain identity until the end-to-end encryption integration is ready.
 
+For your own image, select **Stealth**, then **Choose…** in the image-cover row.
+Pick a PNG or JPEG, then use **Seal → Image**. Rust embeds the message in a new
+PNG using that image; the original file is never overwritten. **Replace…** changes
+the cover and the **×** restores the generated image. The choice lasts for the
+current ring session. If the image is too small, choose a larger one or remove it.
+Robust always generates its own grid, so the cover picker is disabled in that mode.
+
 ## Destination platform and image mode
 
 The glass selector below the ring suggests the app where the text was selected.
