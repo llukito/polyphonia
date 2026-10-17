@@ -236,6 +236,34 @@ struct RingOverlayView: View {
         .frame(height: RingLayout.fieldHeight)
         .background { accessoryGlass }
 
+        VStack(alignment: .leading, spacing: RingLayout.smallGap) {
+          HStack {
+            Label(
+              session.selectedContact?.algorithm.title ?? "ML-KEM-768", systemImage: "lock.shield")
+            Spacer()
+            Toggle("Compact", isOn: $session.compactMessages)
+              .toggleStyle(.checkbox)
+              .help("Use compact messages after the recipient opens your full message")
+              .accessibilityLabel("Use compact messages")
+          }
+          Text(
+            session.compactMessages
+              ? "The recipient must open your last full message first. Sending sessions last 7 days."
+              : session.selectedContact?.algorithm == .mlkem
+                ? "Full: use Stealth PNG or a custom WAV. After they open it, compact messages fit generated audio and smaller images."
+                : "Full message: starts a fresh session and works without earlier files."
+          )
+          .foregroundStyle(RingColor.secondary)
+          if session.compactMessages {
+            Button("Start a new session") { session.compactMessages = false }
+              .buttonStyle(.plain)
+              .foregroundStyle(RingColor.seal)
+          }
+        }
+        .font(.system(size: RingLayout.captionSize))
+        .padding(RingLayout.padding)
+        .background { accessoryGlass }
+
         MessageDraftControls(session: session, onReveal: reveal)
 
         PlatformControls(selection: session.platformSelection)
@@ -292,11 +320,13 @@ struct RingOverlayView: View {
         .foregroundStyle(RingColor.seal)
       }
 
-      Text("FAKE CIPHER · NOT SECURE")
-        .font(.system(size: RingLayout.tinySize, weight: .medium))
-        .tracking(1)
-        .foregroundStyle(RingColor.warning.opacity(0.8))
-        .shadow(color: .black.opacity(0.6), radius: RingLayout.smallGap)
+      if session.screen == .home {
+        Text(session.selectedContact?.algorithm.title ?? "ML-KEM-768")
+          .font(.system(size: RingLayout.tinySize, weight: .medium))
+          .tracking(1)
+          .foregroundStyle(
+            session.selectedContact?.algorithm == .fake ? RingColor.warning : RingColor.secondary)
+      }
     }
     .disabled(session.isWorking)
   }
@@ -308,15 +338,19 @@ struct RingOverlayView: View {
           session.selectedContactID = contact.id
         } label: {
           if contact.id == session.selectedContactID {
-            Label(contact.name, systemImage: "checkmark")
+            Label("\(contact.name) · \(contact.algorithm.title)", systemImage: "checkmark")
           } else {
-            Text(contact.name)
+            Text("\(contact.name) · \(contact.algorithm.title)")
           }
         }
       }
       Divider()
       Button("Import public key…", action: onImportContact)
-      Button("Export my public key…", action: session.exportMyPublicKey)
+      Menu("Export my public key") {
+        ForEach(CryptoAlgorithm.secureAlgorithms, id: \.self) { algorithm in
+          Button(algorithm.title + "…") { session.exportMyPublicKey(algorithm: algorithm) }
+        }
+      }
       Divider()
       Button("Quit Polyphonia", action: onQuit)
     } label: {

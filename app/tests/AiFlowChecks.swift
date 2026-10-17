@@ -133,7 +133,7 @@ private final class FlowPreview {
 
 /// Deterministic AI responses, with real Rust carrier encoding and decoding.
 private final class FlowBackend: PolyphoniaBackend, @unchecked Sendable {
-  let identity: DemoIdentity
+  let crypto: PolyphoniaService
   let delay: TimeInterval
   let reject: Bool
   private let lock = NSLock()
@@ -144,13 +144,14 @@ private final class FlowBackend: PolyphoniaBackend, @unchecked Sendable {
   let server = AiServer(kind: .ollama, baseUrl: "http://127.0.0.1:11434/v1", models: ["test-model"])
 
   init(delay: TimeInterval = 0, reject: Bool = false) throws {
-    let generated = try generateIdentity(algorithm: .fake)
-    identity = DemoIdentity(publicKey: generated.publicKey, secretKey: generated.secretKey)
+    crypto = PolyphoniaService(vault: MemorySecretVault())
     self.delay = delay
     self.reject = reject
   }
 
-  func demoIdentity() -> DemoIdentity { identity }
+  func identity(algorithm: CryptoAlgorithm) throws -> AppIdentity {
+    try crypto.identity(algorithm: algorithm)
+  }
   func detectAiServers() -> [AiServer] { [server] }
   func shorten(message: String, server: AiServer, model: String) throws -> AiShortenSuggestion {
     Thread.sleep(forTimeInterval: delay)
@@ -167,20 +168,18 @@ private final class FlowBackend: PolyphoniaBackend, @unchecked Sendable {
   }
   func seal(
     message: String, recipientPublicKey: Data, decoy: String?, passphrase: String?,
+    algorithm: CryptoAlgorithm, compact: Bool,
     carrier: CarrierKind, coverImage: Data?, coverAudio: Data?
   ) throws -> SealedCarrier {
-    let result = try PolyphoniaService().seal(
+    let result = try crypto.seal(
       message: message, recipientPublicKey: recipientPublicKey, decoy: decoy,
-      passphrase: passphrase, carrier: carrier, coverImage: coverImage, coverAudio: coverAudio)
+      passphrase: passphrase, algorithm: algorithm, compact: compact, carrier: carrier,
+      coverImage: coverImage, coverAudio: coverAudio)
     lock.withLock { outputURL = result.fileURL }
     return result
   }
   func open(file: Data, passphrase: String?) throws -> OpenedMessage {
-    let opened = try decrypt(
-      request: DecryptRequest(
-        file: file, mySecretKey: identity.secretKey, myPublicKey: identity.publicKey,
-        passphrase: passphrase))
-    return OpenedMessage(text: opened.text, summary: "Test carrier")
+    try crypto.open(file: file, passphrase: passphrase)
   }
 }
 
@@ -213,7 +212,9 @@ struct AiFlowChecks {
     session.message = source
     session.platformSelection.selectMode(.stealth)
     session.discoverAiServers()
-    try await waitUntil("AI discovery did not finish") { session.selectedAiModel != nil }
+    try await waitUntil("AI discovery did not finish") {
+      session.selectedAiModel != nil && session.selectedContact != nil
+    }
     return session
   }
 
@@ -223,6 +224,7 @@ struct AiFlowChecks {
     application.setActivationPolicy(.prohibited)
     Task { @MainActor in
       do {
+        try await Task.detached { try CryptoFlowChecks.run() }.value
         try await runChecks()
         print("PASS all AI flow checks")
         exit(0)
@@ -273,6 +275,8 @@ struct AiFlowChecks {
     hidden.sealAndCopy(as: .audio)
     try require(!hidden.isWorking, "Hidden mode allowed sealing without a passphrase")
     hidden.passphrase = "test-only-passphrase"
+    // The prior PNG was opened above, establishing this one-way ML-KEM session.
+    hidden.compactMessages = true
     let hiddenFile = try await seal(hidden, using: backend, as: .audio)
     defer { try? FileManager.default.removeItem(at: hiddenFile) }
     let bytes = try Data(contentsOf: hiddenFile)

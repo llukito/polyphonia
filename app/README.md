@@ -34,11 +34,11 @@ the source app active until the ring appears. Password fields and apps that bloc
 both selection access and Copy cannot be captured. A failed capture shows the reason
 under the ring instead of silently treating it as an empty selection.
 
-The current demo uses the Rust **Fake** cipher, which is not secure. The carriers
-are real: Image creates **Stealth PNG** or **Robust PNG**; Audio creates **Music WAV**
-or **Music MIDI**, chosen in the glass controls below the ring. Rust encodes the
-selected message into the generated image or melody, and Swift copies the actual
-file URL to the clipboard. No command-line subprocess is needed.
+The app uses **ML-KEM-768** by default, with RSA-2048 available for comparison.
+The contact’s public key selects the algorithm automatically. Image creates
+**Stealth PNG** or **Robust PNG**; Audio creates **Music WAV** or **Music MIDI**.
+Rust encrypts the draft and embeds it in the carrier, then Swift copies the actual
+file URL to the clipboard. Private keys stay in the local macOS Keychain.
 
 Send WAV/MIDI as original files/documents, not voice messages. MIDI playback needs
 a compatible player. WAV files can be large and take a moment to generate; Rust
@@ -46,12 +46,28 @@ work and temporary file creation run off the UI thread. The result shows the
 carrier format and file size. Carrier capacity includes the envelope and both
 message slots; if it is exceeded, shorten the message or choose Stealth PNG.
 
-Open auto-detects all four carriers, including files received via Paste, Browse
-or drop. Existing RawDebug `.bin` demo files can still be opened. Hidden mode
-keeps the same interface for both slots. These files use demo keys; they are not
-compatible with files encrypted for a different algorithm or recipient. Although
-Rust now includes ML-KEM, this frontend deliberately keeps its existing Fake
-contacts and Keychain identity until the end-to-end encryption integration is ready.
+Open auto-detects the carrier and encryption algorithm. Only the recipient’s
+private key can open a real encrypted file. With a decoy, an empty or incorrect
+passphrase returns the decoy; the agreed passphrase returns the real message.
+Both results have the same interface. A normal message needs the recipient’s
+private key, without a separate passphrase.
+
+Existing Fake identities, contacts, and files remain readable, but new sealing
+to Fake contacts is blocked. Ask those contacts to export a new ML-KEM public key;
+old contacts are never silently relabeled as secure.
+
+Full messages start a fresh one-way session. After the recipient opens that file,
+enable **Compact** below the contact selector to omit the large public-key block
+from later files. This helps small carriers such as Robust PNG and MIDI. A reply starts its
+own session in the other direction. **Start a new session** turns compact mode
+off; send that next full message before sending more compact files. Sending
+sessions expire after 7 days; received session keys are retained for 30 days. Session keys are
+stored only in Keychain and survive app restarts. A recipient who missed the full
+message sees instructions to open it or request a new full message.
+
+Sessions do not authenticate the sender and do not provide forward secrecy.
+RSA is a comparison option: its Rust implementation documents a known timing
+side channel; prefer ML-KEM. See `crates/poly-crypto/src/rsa.rs`.
 
 For your own image, select **Stealth**, then **Choose…** in the image-cover row.
 Pick a PNG or JPEG, then use **Seal → Image**. Rust embeds the message in a new
@@ -150,22 +166,32 @@ to `/private/tmp/polyphonia-restored-*.png`.
 
 ## Try the carriers
 
-1. Run the **polyphonia** scheme in Xcode. Use **This Mac · demo identity** to
+1. Run the **polyphonia** scheme in Xcode. Use **This Mac · ML-KEM-768** to
    receive your own file.
 2. Select a short message in another app, then press **Command + Shift + P**.
 3. Choose an image mode below the platform selector, then Seal → Image. Paste
    the copied PNG into a chat, or use Save to keep a local copy.
 4. Invoke the ring again, choose Open → Paste file (or Browse the saved PNG).
    The selected message should appear. Repeat for both image modes.
-5. Choose WAV below the ring, then Seal → Audio. Repeat Open with that file.
+5. Enable **Compact** after opening the full PNG, choose WAV below the ring,
+   then Seal → Audio. Repeat Open with that file.
    Choose a 16-bit PCM cover WAV and repeat to hear your own music in the new
    file. Then repeat with MIDI; its file extension is `.mid`.
 6. For hidden mode, set a decoy and passphrase before sealing. Open without the
    passphrase to see the decoy, then open with the agreed passphrase to see the
    real message. The interface does not label either slot.
 
-## Sharing a demo contact
+## Sharing public keys
 
-Use **Export my public key…** in the contact menu below the ring and share the
-resulting `.pub` file. The recipient imports it from that menu. Secret key
-bytes stay in the local macOS Keychain.
+Use **Export my public key → ML-KEM-768** in the contact menu and share the `.pub`
+file. The other person imports it, selects your contact, and seals a message for
+you. Exchange keys in both directions to reply. For RSA comparison, export the
+RSA option; this also adds your RSA identity as a contact for local testing.
+Imported keys are validated against their declared algorithm before saving.
+
+The integration checks run both real algorithms through PNG and WAV, check
+passphrase/decoy and wrong-recipient behavior, round-trip public-key files, test
+compact sessions before and after opening a full message, session expiry and
+recovery, all four media carriers, custom WAVs, and reloaded identities and
+sessions using an isolated in-memory vault. They also confirm legacy contact
+migration and Fake read compatibility without touching the user’s Keychain.

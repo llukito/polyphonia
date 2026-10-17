@@ -16,6 +16,7 @@ final class MessageSession: ObservableObject {
   @Published var decoy = ""
   @Published var passphrase = ""
   @Published var hiddenMode = false
+  @Published var compactMessages = false
   @Published var audioFormat: AudioFormat = .wav
   @Published private(set) var imageCover: ImageCover?
   @Published private(set) var audioCover: AudioCover?
@@ -31,7 +32,7 @@ final class MessageSession: ObservableObject {
   @Published private(set) var selectionIssue: SelectionIssue?
   @Published private(set) var sendingGuide: SendingGuide?
   @Published private(set) var resendGuide: SendingGuide?
-  @Published private(set) var contacts: [DemoContact] = []
+  @Published private(set) var contacts: [Contact] = []
   @Published var selectedContactID: UUID?
   let platformSelection = PlatformSelection()
 
@@ -51,16 +52,34 @@ final class MessageSession: ObservableObject {
     self.pasteboard = pasteboard
     do {
       contacts = try contactStore.load()
-      let identity = try service.demoIdentity()
-      if !contacts.contains(where: { $0.publicKey == identity.publicKey }) {
-        let ownContact = DemoContact(
-          name: "This Mac · demo identity", publicKey: identity.publicKey)
-        contacts.insert(ownContact, at: 0)
-        try contactStore.save(contacts)
-      }
-      selectedContactID = contacts.first?.id
+      selectedContactID = contacts.first(where: { $0.algorithm != .fake })?.id
     } catch {
-      statusMessage = "Could not load the demo identity from Keychain."
+      statusMessage = "Could not load your contacts."
+      return
+    }
+    Task {
+      do {
+        let identity = try await Task.detached(priority: .userInitiated) {
+          try service.identity(algorithm: .mlkem)
+        }.value
+        addOwnContact(identity, algorithm: .mlkem)
+      } catch {
+        statusMessage = "Could not load your encryption identity from Keychain."
+      }
+    }
+  }
+
+  private func addOwnContact(_ identity: AppIdentity, algorithm: CryptoAlgorithm) {
+    if !contacts.contains(where: { $0.publicKey == identity.publicKey && $0.algorithm == algorithm }
+    ) {
+      contacts.insert(
+        Contact(name: "This Mac", publicKey: identity.publicKey, algorithm: algorithm), at: 0)
+      do { try contactStore.save(contacts) } catch {
+        statusMessage = "Could not save your public contact. Please try again."
+      }
+    }
+    if selectedContactID == nil {
+      selectedContactID = contacts.first(where: { $0.publicKey == identity.publicKey })?.id
     }
   }
 
@@ -264,7 +283,8 @@ final class MessageSession: ObservableObject {
       return
     }
     guard !hiddenMode || (!decoy.isEmpty && !passphrase.isEmpty) else {
-      statusMessage = "Enter a decoy message and an agreed passphrase in Decoy settings before sealing."
+      statusMessage =
+        "Enter a decoy message and an agreed passphrase in Decoy settings before sealing."
       return
     }
     guard let contact = selectedContact else {
@@ -290,7 +310,13 @@ final class MessageSession: ObservableObject {
     let realMessage = message
     let decoyMessage = hiddenMode ? decoy : nil
     let hiddenPassphrase = hiddenMode ? passphrase : nil
+    guard contact.algorithm != .fake else {
+      statusMessage = CryptoSetupError.legacyContact.localizedDescription
+      return
+    }
     let recipientPublicKey = contact.publicKey
+    let algorithm = contact.algorithm
+    let compact = compactMessages
     let coverBytes = selectedCarrier == .stealthPng ? imageCover?.bytes : nil
     let coverAudioBytes = selectedCarrier == .musicWav ? audioCover?.bytes : nil
     let backend = service
@@ -303,7 +329,8 @@ final class MessageSession: ObservableObject {
         let carrier = try await Task.detached(priority: .userInitiated) {
           try backend.seal(
             message: realMessage, recipientPublicKey: recipientPublicKey,
-            decoy: decoyMessage, passphrase: hiddenPassphrase, carrier: selectedCarrier,
+            decoy: decoyMessage, passphrase: hiddenPassphrase,
+            algorithm: algorithm, compact: compact, carrier: selectedCarrier,
             coverImage: coverBytes, coverAudio: coverAudioBytes)
         }.value
         let fileURL = carrier.fileURL
@@ -330,7 +357,12 @@ final class MessageSession: ObservableObject {
       } catch PolyError.NotImplemented {
         statusMessage = "\(medium.title) sealing is not available in the current backend yet."
       } catch {
-        if case PolyError.CarrierTooSmall = error, !aiServers.isEmpty {
+        if case PolyError.CarrierTooSmall = error, algorithm == .mlkem, !compact,
+          coverBytes == nil, coverAudioBytes == nil
+        {
+          statusMessage =
+            "This carrier is too small for a full ML-KEM message. Use Stealth PNG or a custom WAV. Once the recipient opens that file, enable compact messages for smaller carriers."
+        } else if case PolyError.CarrierTooSmall = error, !aiServers.isEmpty {
           statusMessage =
             "Message too large. Use Local AI to shorten it, choose a larger cover, or remove the cover."
         } else {
@@ -343,37 +375,58 @@ final class MessageSession: ObservableObject {
     }
   }
 
-  var selectedContact: DemoContact? {
+  var selectedContact: Contact? {
     contacts.first(where: { $0.id == selectedContactID })
   }
 
   func importContact(fileURL: URL) {
-    let hasFileAccess = fileURL.startAccessingSecurityScopedResource()
-    defer { if hasFileAccess { fileURL.stopAccessingSecurityScopedResource() } }
-
-    do {
-      let contact = try DemoContact.read(from: fileURL)
-      contacts.removeAll(where: { $0.publicKey == contact.publicKey })
-      contacts.append(contact)
-      try contactStore.save(contacts)
-      selectedContactID = contact.id
-      statusMessage = "Imported contact: \(contact.name)."
-    } catch {
-      statusMessage = "Could not import that public key file."
+    guard !isWorking else { return }
+    isWorking = true
+    Task {
+      defer { isWorking = false }
+      let hasFileAccess = fileURL.startAccessingSecurityScopedResource()
+      defer { if hasFileAccess { fileURL.stopAccessingSecurityScopedResource() } }
+      do {
+        let contact = try await Task.detached(priority: .userInitiated) {
+          try Contact.read(from: fileURL)
+        }.value
+        var updated = contacts.filter { $0.publicKey != contact.publicKey }
+        updated.append(contact)
+        try contactStore.save(updated)
+        contacts = updated
+        selectedContactID = contact.id
+        statusMessage =
+          contact.algorithm == .fake
+          ? CryptoSetupError.legacyContact.localizedDescription
+          : "Imported contact: \(contact.name) · \(contact.algorithm.title)."
+      } catch {
+        statusMessage =
+          "Could not import that public key. Check that its algorithm and key bytes are valid."
+      }
     }
   }
 
-  func exportMyPublicKey() {
-    do {
-      let identity = try service.demoIdentity()
-      let panel = NSSavePanel()
-      panel.nameFieldStringValue = "Polyphonia-demo.pub"
-      panel.allowedContentTypes = [.data]
-      guard panel.runModal() == .OK, let destination = panel.url else { return }
-      try DemoContact.writePublicKey(identity.publicKey, to: destination)
-      statusMessage = "Exported your public key. Share the .pub file with your contact."
-    } catch {
-      statusMessage = "Could not export the public key."
+  func exportMyPublicKey(algorithm: CryptoAlgorithm) {
+    guard !isWorking, algorithm != .fake else { return }
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = "Polyphonia-\(algorithm.rawValue).pub"
+    panel.allowedContentTypes = [.data]
+    guard panel.runModal() == .OK, let destination = panel.url else { return }
+    isWorking = true
+    let backend = service
+    Task {
+      defer { isWorking = false }
+      do {
+        let identity = try await Task.detached(priority: .userInitiated) {
+          try backend.identity(algorithm: algorithm)
+        }.value
+        try Contact.writePublicKey(identity.publicKey, algorithm: algorithm, to: destination)
+        addOwnContact(identity, algorithm: algorithm)
+        statusMessage =
+          "Exported your \(algorithm.title) public key. Share the .pub file with your contact."
+      } catch {
+        statusMessage = "Could not export the public key."
+      }
     }
   }
 
@@ -460,32 +513,50 @@ final class MessageSession: ObservableObject {
   }
 }
 
-struct DemoContact: Identifiable, Codable, Hashable, Sendable {
+struct Contact: Identifiable, Codable, Hashable, Sendable {
   let id: UUID
   var name: String
   let publicKey: Data
+  let algorithm: CryptoAlgorithm
 
-  init(id: UUID = UUID(), name: String, publicKey: Data) {
+  init(id: UUID = UUID(), name: String, publicKey: Data, algorithm: CryptoAlgorithm) {
     self.id = id
     self.name = name
     self.publicKey = publicKey
+    self.algorithm = algorithm
   }
 
-  static func read(from fileURL: URL) throws -> DemoContact {
+  private enum CodingKeys: String, CodingKey { case id, name, publicKey, algorithm }
+
+  init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    id = try values.decode(UUID.self, forKey: .id)
+    name = try values.decode(String.self, forKey: .name)
+    publicKey = try values.decode(Data.self, forKey: .publicKey)
+    // Contacts saved before real crypto had only Fake keys. Never silently promote them.
+    algorithm = try values.decodeIfPresent(CryptoAlgorithm.self, forKey: .algorithm) ?? .fake
+  }
+
+  static func read(from fileURL: URL) throws -> Contact {
     let lines = try String(contentsOf: fileURL, encoding: .utf8)
       .split(whereSeparator: \.isNewline)
-    guard lines.count >= 2, lines[0] == "polyphonia-public-key v1 fake" else {
+    guard lines.count == 2 else { throw ContactFileError.invalidFormat }
+    let header = lines[0].split(separator: " ")
+    guard header.count == 3, header[0] == "polyphonia-public-key", header[1] == "v1",
+      let algorithm = CryptoAlgorithm(rawValue: String(header[2]))
+    else {
       throw ContactFileError.invalidFormat
     }
     let keyBytes = try Data(hexadecimal: String(lines[1]))
-    guard !keyBytes.isEmpty else { throw ContactFileError.invalidFormat }
+    try validatePublicKey(publicKey: keyBytes, algorithm: algorithm.core)
     let name = fileURL.deletingPathExtension().lastPathComponent
-    return DemoContact(name: name, publicKey: keyBytes)
+    return Contact(name: name, publicKey: keyBytes, algorithm: algorithm)
   }
 
-  static func writePublicKey(_ publicKey: Data, to fileURL: URL) throws {
+  static func writePublicKey(_ publicKey: Data, algorithm: CryptoAlgorithm, to fileURL: URL) throws
+  {
     let hexKey = publicKey.map { String(format: "%02x", $0) }.joined()
-    let content = "polyphonia-public-key v1 fake\n\(hexKey)\n"
+    let content = "polyphonia-public-key v1 \(algorithm.rawValue)\n\(hexKey)\n"
     try content.write(to: fileURL, atomically: true, encoding: .utf8)
   }
 }
@@ -494,12 +565,12 @@ private struct ContactStore {
   private let storageKey = "polyphonia.demo.contacts.v1"
   let defaults: UserDefaults
 
-  func load() throws -> [DemoContact] {
+  func load() throws -> [Contact] {
     guard let data = defaults.data(forKey: storageKey) else { return [] }
-    return try JSONDecoder().decode([DemoContact].self, from: data)
+    return try JSONDecoder().decode([Contact].self, from: data)
   }
 
-  func save(_ contacts: [DemoContact]) throws {
+  func save(_ contacts: [Contact]) throws {
     let data = try JSONEncoder().encode(contacts)
     defaults.set(data, forKey: storageKey)
   }
@@ -536,6 +607,7 @@ private enum FriendlyError {
     for error: Error, sealing: Bool = false, usingCover: SealMedium? = nil
   ) -> String {
     guard let coreError = error as? PolyError else {
+      if let setup = error as? CryptoSetupError { return setup.localizedDescription }
       if error is CocoaError { return "The file could not be read or saved." }
       return "Polyphonia could not finish that action. Please try again."
     }
@@ -545,12 +617,15 @@ private enum FriendlyError {
       return "This file was compressed in transit. Ask them to resend it as a document."
     case .WrongRecipient:
       return "This file was made for a different contact."
+    case .UnknownSession:
+      return
+        "This Mac has no key for this compact message. Open the sender’s full message first, or ask them to turn off compact messages and resend."
     case .DecryptFailed:
       return "Could not open this file. Check the passphrase and try again."
     case .UnrecognizedFile, .BadMagic:
       return "This file does not contain a Polyphonia message."
     case .NotImplemented(let what):
-      return "That demo option is not ready yet: \(what)"
+      return "That option is not ready yet: \(what)"
     case .CarrierTooSmall(let needed, let available):
       return "This carrier fits \(available) bytes, but the message envelope needs \(needed). "
         + (usingCover == .image

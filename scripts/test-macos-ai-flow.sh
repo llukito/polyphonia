@@ -27,6 +27,6 @@ for source_file in app/polyphonia/polyphonia/*.swift; do
 done
 xcrun swiftc -parse-as-library -target "$(uname -m)-apple-macos14.0" \
   -module-cache-path "$test_dir/module-cache" -I build/headers \
-  build/swift/PolyphoniaCore.swift "${sources[@]}" app/tests/AiFlowChecks.swift \
+  build/swift/PolyphoniaCore.swift "${sources[@]}" app/tests/CryptoFlowChecks.swift app/tests/AiFlowChecks.swift \
   build/universal/libpoly_ffi.a -o "$test_app/Contents/MacOS/AiFlowChecks"
 "$test_app/Contents/MacOS/AiFlowChecks" "$@"
