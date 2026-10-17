@@ -10,8 +10,8 @@ struct RingOverlayView: View {
   let onChooseCover: () -> Void
   let onChooseAudioCover: () -> Void
 
-  @State private var accessoryContentHeight = RingLayout.fieldHeight
-  @State private var isSealExpanded = false
+  @State private var selectedMedium: SealMedium?
+  @State private var settingsPanel: RingSettingsPanel?
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
@@ -20,11 +20,20 @@ struct RingOverlayView: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onDismiss)
 
+      if !ringOptions.isEmpty {
+        SealOptionsRing(
+          options: ringOptions, isWorking: session.isWorking,
+          isAiWorking: session.isAiWorking,
+          isSelected: optionIsSelected, onSelect: selectOption)
+          .position(RingLayout.center)
+      }
+
       RingMenu(
         leading: actions.leading, trailing: actions.trailing,
-        isPresented: presentation.isPresented, isWorking: session.isWorking,
+        isPresented: presentation.isPresented,
+        isWorking: session.isWorking || session.isAiWorking,
+        showBranches: selectedMedium != nil,
         releaseRequest: presentation.releaseRequest,
-        onExpansionChanged: { isSealExpanded = $0 },
         onAction: perform
       ) { hovered in
         hub(hovered: hovered)
@@ -34,29 +43,34 @@ struct RingOverlayView: View {
       closeButton
         .position(x: RingLayout.center.x, y: RingLayout.closeY)
 
-      AccessoryScrollView(
-        contentWidth: RingLayout.optionsWidth,
-        onContentHeightChange: { height in
-          accessoryContentHeight = height
-          presentation.accessoryHeight = height
-        }
-      ) {
-        accessories
-      }
-      .frame(
-        width: RingLayout.optionsWidth,
-        height: min(
-          accessoryContentHeight, RingLayout.maximumAccessoryHeight(isSealExpanded: isSealExpanded))
-      )
-      .padding(.top, RingLayout.accessoryY(isSealExpanded: isSealExpanded))
-      .opacity(presentation.isPresented ? 1 : 0)
-      .offset(y: presentation.isPresented || reduceMotion ? 0 : RingLayout.gap)
-      .animation(reduceMotion ? RingMotion.reduced : RingMotion.change, value: isSealExpanded)
     }
     .frame(width: RingLayout.canvasWidth, height: RingLayout.canvasHeight)
     .preferredColorScheme(.dark)
     .animation(reduceMotion ? RingMotion.reduced : RingMotion.change, value: session.screen)
     .animation(reduceMotion ? RingMotion.reduced : RingMotion.change, value: session.hiddenMode)
+    .animation(reduceMotion ? RingMotion.reduced : RingMotion.change, value: selectedMedium)
+    .sheet(item: $settingsPanel) { panel in
+      RingSettingsCard(
+        panel: panel, session: session,
+        onImportContact: {
+          settingsPanel = nil
+          DispatchQueue.main.async(execute: onImportContact)
+        },
+        onDone: { settingsPanel = nil })
+    }
+    .sheet(item: $session.aiReview) { review in
+      AiReviewCard(
+        review: review,
+        onAccept: session.applyAiReview,
+        onCancel: { session.aiReview = nil })
+    }
+    .onChange(of: presentation.isPresented) { _, shown in
+      if !shown { selectedMedium = nil; settingsPanel = nil }
+    }
+    .onChange(of: session.screen) { _, screen in
+      if screen != .home { selectedMedium = nil }
+      if screen == .result, session.sendingGuide != nil { settingsPanel = .guide }
+    }
     .dropDestination(for: URL.self) { files, _ in
       guard let file = files.first, !session.isWorking else { return false }
       session.open(fileURL: file)
@@ -77,11 +91,12 @@ struct RingOverlayView: View {
     switch action {
     // Seal expands the ring; its children perform encryption.
     case .seal: break
-    case .sealImage: session.sealAndCopy(as: .image)
-    case .sealAudio: session.sealAndCopy(as: .audio)
+    case .sealImage: selectedMedium = .image
+    case .sealAudio: selectedMedium = .audio
     case .open:
       session.passphrase = ""
       session.hiddenMode = false
+      selectedMedium = nil
       session.show(.open)
     case .paste: session.pasteReceivedFile()
     case .browse: onBrowse()
@@ -94,20 +109,28 @@ struct RingOverlayView: View {
   @ViewBuilder
   private func hub(hovered: RingAction?) -> some View {
     VStack(spacing: RingLayout.gap) {
-      if session.isWorking {
+      if session.isWorking || session.isAiWorking {
         ProgressView().controlSize(.small)
-        Text("Working…").font(.system(size: RingLayout.captionSize))
+        Text(session.isAiWorking ? "Asking local AI…" : "Working…")
+          .font(.system(size: RingLayout.captionSize))
+      } else if let status = session.statusMessage, session.screen != .result {
+        Image(systemName: "exclamationmark.circle")
+          .foregroundStyle(RingColor.warning)
+        Text(status)
+          .font(.system(size: RingLayout.tinySize))
+          .lineLimit(5)
       } else {
         switch session.screen {
         case .home:
-          Image(systemName: hovered?.symbol ?? "waveform")
+          Image(systemName: selectedMedium == .image ? "photo" :
+                selectedMedium == .audio ? "waveform" : hovered?.symbol ?? "waveform")
             .font(.system(size: RingLayout.titleSize, weight: .light))
             .foregroundStyle(
               hovered == .seal || hovered == .sealImage || hovered == .sealAudio
                 ? RingColor.seal : RingColor.ink
             )
             .contentTransition(.symbolEffect(.replace))
-          Text(hovered?.title ?? "Polyphonia")
+          Text(selectedMedium?.title ?? hovered?.title ?? "Polyphonia")
             .font(.system(size: RingLayout.titleSize, weight: .medium))
             .contentTransition(.opacity)
           Text(homeHint(hovered: hovered))
@@ -115,6 +138,9 @@ struct RingOverlayView: View {
             .foregroundStyle(RingColor.secondary)
             .lineLimit(2)
             .contentTransition(.opacity)
+          Text("FAKE CIPHER")
+            .font(.system(size: RingLayout.tinySize, weight: .medium))
+            .foregroundStyle(RingColor.warning)
         case .open:
           Image(systemName: "tray.and.arrow.down")
             .font(.system(size: RingLayout.titleSize, weight: .light))
@@ -145,12 +171,17 @@ struct RingOverlayView: View {
   }
 
   private func homeHint(hovered: RingAction?) -> String {
-    switch hovered {
+    if let selectedMedium {
+      let format = selectedMedium == .image
+        ? (session.platformSelection.imageMode?.title ?? "Choose mode")
+        : session.audioFormat.title
+      return "\(format) · \(session.message.utf8.count) bytes"
+    }
+    return switch hovered {
     case .seal:
       "Move out to Image or Audio"
     case .sealImage, .sealAudio:
-      session.message.isEmpty
-        ? "Selection unavailable" : "\(session.message.count) characters selected"
+      session.message.isEmpty ? "Selection unavailable" : "Choose to open settings"
     case .open: "From your clipboard or a file"
     default: "Swipe, then release"
     }
@@ -174,141 +205,72 @@ struct RingOverlayView: View {
     }
   }
 
-  private var accessories: some View {
-    VStack(spacing: RingLayout.gap) {
-      switch session.screen {
-      case .home:
-        HStack(spacing: RingLayout.padding) {
-          contactMenu
-          Button {
-            session.hiddenMode.toggle()
-          } label: {
-            Label("Hidden", systemImage: session.hiddenMode ? "eye.slash.fill" : "eye.slash")
-              .foregroundStyle(session.hiddenMode ? RingColor.seal : RingColor.secondary)
-          }
-          .buttonStyle(.plain)
-          .help("Configure a decoy and passphrase")
-        }
-        .font(.system(size: RingLayout.captionSize))
-        .padding(.horizontal, RingLayout.padding)
-        .frame(height: RingLayout.fieldHeight)
-        .background { accessoryGlass }
-
-        PlatformControls(selection: session.platformSelection)
-        ImageCoverControls(
-          selection: session.platformSelection, coverName: session.imageCover?.name,
-          onChoose: onChooseCover, onRemove: session.removeImageCover)
-        AudioFormatPicker(selection: $session.audioFormat)
-        AudioCoverControls(
-          format: session.audioFormat, coverName: session.audioCover?.name,
-          onChoose: onChooseAudioCover, onRemove: session.removeAudioCover)
-
-        if session.hiddenMode {
-          TextField("Decoy message", text: $session.decoy)
-            .textFieldStyle(RingFieldStyle())
-          SecureField("Agreed passphrase", text: $session.passphrase)
-            .textFieldStyle(RingFieldStyle())
-        }
-      case .open:
-        PlatformPicker(selection: session.platformSelection)
-        SecureField("Passphrase · optional", text: $session.passphrase)
-          .textFieldStyle(RingFieldStyle())
-        Button("Back to Seal / Open") { session.show(.home) }
-          .buttonStyle(.plain)
-          .font(.system(size: RingLayout.captionSize))
-          .foregroundStyle(RingColor.secondary)
-      case .result:
-        if let summary = session.fileSummary {
-          Text(summary)
-            .font(.system(size: RingLayout.captionSize))
-            .foregroundStyle(RingColor.secondary)
-            .padding(RingLayout.gap)
-            .background { accessoryGlass }
-        }
-        if let guide = session.sendingGuide {
-          SendingGuideButton(guide: guide, showOnAppear: true)
-        }
+  private var ringOptions: [RingOption] {
+    switch session.screen {
+    case .home:
+      guard let selectedMedium else { return [] }
+      var options: [RingOption] = selectedMedium == .image
+        ? [.stealth, .robust, .cover]
+        : [.wav, .midi, .cover]
+      let hasCover = selectedMedium == .image
+        ? session.imageCover != nil : session.audioCover != nil
+      if hasCover {
+        options.append(.removeCover)
       }
-
-      if let status = session.statusMessage {
-        Text(status)
-          .font(.system(size: RingLayout.captionSize))
-          .foregroundStyle(RingColor.ink)
-          .multilineTextAlignment(.center)
-          .padding(RingLayout.gap)
-          .background { accessoryGlass }
-          .transition(.opacity)
-      }
-
-      if let guide = session.resendGuide {
-        SendingGuideButton(guide: guide, title: "How to resend as a file", showOnAppear: true)
-          .id(guide.id)
-      }
-
-      if session.screen == .home, session.selectionIssue?.needsPermission == true {
-        Button("Open Accessibility Settings") {
-          guard
-            let url = URL(
-              string:
-                "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
-          else { return }
-          NSWorkspace.shared.open(url)
-        }
-        .buttonStyle(.plain)
-        .font(.system(size: RingLayout.captionSize))
-        .foregroundStyle(RingColor.seal)
-      }
-
-      Text("FAKE CIPHER · NOT SECURE")
-        .font(.system(size: RingLayout.tinySize, weight: .medium))
-        .tracking(1)
-        .foregroundStyle(RingColor.warning.opacity(0.8))
-        .shadow(color: .black.opacity(0.6), radius: RingLayout.smallGap)
+      if selectedMedium == .image { options.append(.platform) }
+      options += [.recipient, .hidden]
+      if !session.aiServers.isEmpty || session.isAiWorking { options.append(.ai) }
+      options.append(.seal)
+      return options
+    case .open: return [.passphrase, .back]
+    case .result:
+      return session.sendingGuide != nil || session.resendGuide != nil ? [.guide] : []
     }
-    .disabled(session.isWorking)
   }
 
-  private var contactMenu: some View {
-    Menu {
-      ForEach(session.contacts) { contact in
-        Button {
-          session.selectedContactID = contact.id
-        } label: {
-          if contact.id == session.selectedContactID {
-            Label(contact.name, systemImage: "checkmark")
-          } else {
-            Text(contact.name)
-          }
-        }
-      }
-      Divider()
-      Button("Import public key…", action: onImportContact)
-      Button("Export my public key…", action: session.exportMyPublicKey)
-      Divider()
-      Button("Quit Polyphonia", action: onQuit)
-    } label: {
-      Label(session.selectedContact?.name ?? "Choose contact", systemImage: "person.crop.circle")
-        .lineLimit(1)
-        .foregroundStyle(RingColor.secondary)
+  private func optionIsSelected(_ option: RingOption) -> Bool {
+    switch option {
+    case .stealth: session.platformSelection.imageMode == .stealth
+    case .robust: session.platformSelection.imageMode == .robust
+    case .wav: session.audioFormat == .wav
+    case .midi: session.audioFormat == .midi
+    case .cover:
+      selectedMedium == .image ? session.imageCover != nil : session.audioCover != nil
+    case .recipient: session.selectedContact != nil
+    case .hidden: session.hiddenMode
+    case .passphrase: !session.passphrase.isEmpty
+    default: false
     }
-    .menuStyle(.borderlessButton)
   }
 
-  private var accessoryGlass: some View {
-    RingAccessoryGlass()
-  }
-}
-
-private struct RingFieldStyle: TextFieldStyle {
-  func _body(configuration: TextField<Self._Label>) -> some View {
-    configuration
-      .font(.system(size: RingLayout.captionSize))
-      .textFieldStyle(.plain)
-      .padding(.horizontal, RingLayout.padding)
-      .frame(height: RingLayout.fieldHeight)
-      .background {
-        RingGlass().overlay(RingColor.smoke).clipShape(Capsule())
-          .overlay(Capsule().strokeBorder(RingColor.edge, lineWidth: RingLayout.hairline))
+  private func selectOption(_ option: RingOption) {
+    switch option {
+    case .stealth: session.platformSelection.selectMode(.stealth)
+    case .robust: session.platformSelection.selectMode(.robust)
+    case .wav: session.audioFormat = .wav
+    case .midi: session.audioFormat = .midi
+    case .cover:
+      if selectedMedium == .image {
+        session.platformSelection.selectMode(.stealth)
+        onChooseCover()
+      } else {
+        session.audioFormat = .wav
+        onChooseAudioCover()
       }
+    case .removeCover:
+      if selectedMedium == .image { session.removeImageCover() }
+      else { session.removeAudioCover() }
+    case .platform: settingsPanel = .platform
+    case .recipient: settingsPanel = .contacts
+    case .hidden: settingsPanel = .hidden
+    case .ai:
+      if session.isAiWorking { session.cancelAiRequest() }
+      else { settingsPanel = .ai }
+    case .seal:
+      if let selectedMedium { session.sealAndCopy(as: selectedMedium) }
+    case .passphrase: settingsPanel = .passphrase
+    case .back: session.show(.home)
+    case .guide: settingsPanel = .guide
+    }
   }
 }

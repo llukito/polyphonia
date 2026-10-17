@@ -19,6 +19,11 @@ final class MessageSession: ObservableObject {
   @Published var audioFormat: AudioFormat = .wav
   @Published private(set) var imageCover: ImageCover?
   @Published private(set) var audioCover: AudioCover?
+  @Published private(set) var aiServers: [AiServer] = []
+  @Published var selectedAiServerURL: String?
+  @Published var selectedAiModel: String?
+  @Published var aiReview: AiReview?
+  @Published private(set) var isAiWorking = false
   @Published var isWorking = false
   @Published var statusMessage: String?
   @Published private(set) var resultText: String?
@@ -33,6 +38,8 @@ final class MessageSession: ObservableObject {
   private let service: PolyphoniaService
   private let contactStore = ContactStore()
   private var generatedFileURL: URL?
+  private var aiDiscoveryID = UUID()
+  private var aiRequestID: UUID?
 
   init(service: PolyphoniaService) {
     self.service = service
@@ -66,7 +73,94 @@ final class MessageSession: ObservableObject {
     fileSummary = nil
     imageCover = nil
     audioCover = nil
+    aiReview = nil
+    cancelAiRequest()
+    discoverAiServers()
     screen = .home
+  }
+
+  var selectedAiServer: AiServer? {
+    aiServers.first(where: { $0.baseUrl == selectedAiServerURL })
+  }
+
+  func discoverAiServers() {
+    let discoveryID = UUID()
+    aiDiscoveryID = discoveryID
+    let backend = service
+    Task {
+      let servers = await Task.detached(priority: .utility) {
+        backend.detectAiServers()
+      }.value
+      guard aiDiscoveryID == discoveryID else { return }
+      aiServers = servers.filter { !$0.models.isEmpty }
+      if !aiServers.contains(where: { $0.baseUrl == selectedAiServerURL }) {
+        selectedAiServerURL = aiServers.first?.baseUrl
+      }
+      if selectedAiServer?.models.contains(selectedAiModel ?? "") != true {
+        selectedAiModel = selectedAiServer?.models.first
+      }
+    }
+  }
+
+  func requestShortening() { requestAiSuggestion(kind: .shorten) }
+  func requestDecoy() { requestAiSuggestion(kind: .decoy) }
+
+  private func requestAiSuggestion(kind: AiReview.Kind) {
+    guard !isAiWorking, let server = selectedAiServer, let model = selectedAiModel else { return }
+    let source = message
+    let currentDecoy = decoy
+    guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      statusMessage = "Select a message before asking the local model."
+      return
+    }
+    let requestID = UUID()
+    aiRequestID = requestID
+    isAiWorking = true
+    statusMessage = nil
+    let backend = service
+    Task {
+      do {
+        let review = try await Task.detached(priority: .userInitiated) {
+          if kind == .shorten {
+            let result = try backend.shorten(message: source, server: server, model: model)
+            return AiReview(kind: .shorten, original: source, suggestion: result.text,
+                            allowedBytes: nil)
+          }
+          let result = try backend.generateDecoy(message: source, server: server, model: model)
+          return AiReview(kind: .decoy, original: currentDecoy, suggestion: result.text,
+                          allowedBytes: Int(result.minBytes)...Int(result.maxBytes))
+        }.value
+        guard aiRequestID == requestID else { return }
+        aiReview = review
+      } catch {
+        guard aiRequestID == requestID else { return }
+        if case AiFfiError.Rejected = error {
+          statusMessage = "The local model could not keep the required facts. Try again or edit the text yourself."
+        } else {
+          statusMessage = "Local AI could not finish: \(error.localizedDescription)"
+        }
+      }
+      guard aiRequestID == requestID else { return }
+      aiRequestID = nil
+      isAiWorking = false
+    }
+  }
+
+  func cancelAiRequest() {
+    aiRequestID = nil
+    isAiWorking = false
+  }
+
+  func applyAiReview(_ text: String) {
+    guard let aiReview else { return }
+    switch aiReview.kind {
+    case .shorten: message = text
+    case .decoy:
+      decoy = text
+      hiddenMode = true
+    }
+    self.aiReview = nil
+    statusMessage = nil
   }
 
   func show(_ screen: Screen) {
@@ -192,9 +286,13 @@ final class MessageSession: ObservableObject {
       } catch PolyError.NotImplemented {
         statusMessage = "\(medium.title) sealing is not available in the current backend yet."
       } catch {
-        statusMessage = FriendlyError.message(
-          for: error, sealing: true,
-          usingCover: coverBytes != nil ? .image : (coverAudioBytes != nil ? .audio : nil))
+        if case PolyError.CarrierTooSmall = error, !aiServers.isEmpty {
+          statusMessage = "Message too large. Use Local AI to shorten it, choose a larger cover, or remove the cover."
+        } else {
+          statusMessage = FriendlyError.message(
+            for: error, sealing: true,
+            usingCover: coverBytes != nil ? .image : (coverAudioBytes != nil ? .audio : nil))
+        }
       }
       isWorking = false
     }

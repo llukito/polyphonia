@@ -33,6 +33,21 @@ private func carrierSummary(_ carrier: CarrierKind, byteCount: Int) -> String {
 final class PolyphoniaService: @unchecked Sendable {
   private let identityStore = KeychainIdentityStore()
 
+  func detectAiServers() -> [AiServer] { aiDetectServers() }
+
+  func shorten(message: String, server: AiServer, model: String) throws -> AiShortenSuggestion {
+    try aiShorten(server: server, model: model, text: message)
+  }
+
+  func generateDecoy(message: String, server: AiServer, model: String) throws
+    -> AiDecoySuggestion
+  {
+    try aiGenerateDecoy(
+      server: server, model: model,
+      targetTextLenBytes: UInt64(message.utf8.count),
+      script: aiDetectScript(text: message), tone: nil)
+  }
+
   func demoIdentity() throws -> DemoIdentity {
     if let saved = try identityStore.load() { return saved }
 

@@ -7,6 +7,7 @@ struct RingMenu<Hub: View>: View {
   let trailing: RingAction
   let isPresented: Bool
   let isWorking: Bool
+  var showBranches = false
   var releaseRequest: RingReleaseRequest? = nil
   var onExpansionChanged: (Bool) -> Void = { _ in }
   let onAction: (RingAction) -> Void
@@ -18,7 +19,7 @@ struct RingMenu<Hub: View>: View {
 
   var body: some View {
     ZStack {
-      if leading == .seal, interaction.isSealExpanded {
+      if leading == .seal, interaction.isSealExpanded || showBranches {
         ForEach(RingBranch.allCases, id: \.self) { branch in
           RingTile(
             action: branch.action, shape: RingBranchSector(branch: branch),
@@ -113,7 +114,7 @@ struct RingMenu<Hub: View>: View {
   private func sector(action: RingAction, side: RingSide, tint: Color) -> some View {
     let highlighted =
       interaction.hoveredAction == action
-      || (action == .seal && interaction.isSealExpanded)
+      || (action == .seal && (interaction.isSealExpanded || showBranches))
     return RingTile(
       action: action, shape: RingSector(side: side), diameter: RingLayout.diameter,
       labelOffset: CGSize(width: side.direction * RingLayout.labelRadius, height: 0),

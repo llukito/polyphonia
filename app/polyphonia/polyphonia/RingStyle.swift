@@ -3,10 +3,10 @@ import SwiftUI
 
 /// Sizes follow the compact, two-action radial design. The cursor sits at the ring's center.
 enum RingLayout {
-  // The extra canvas space keeps shadows and the optional passphrase controls unclipped.
-  static let canvasWidth: CGFloat = 640
-  static let canvasHeight: CGFloat = 760
-  static let centerY: CGFloat = 264
+  // The canvas holds the compact third ring without a control stack below it.
+  static let canvasWidth: CGFloat = 650
+  static let canvasHeight: CGFloat = 650
+  static let centerY: CGFloat = canvasHeight / 2
   static let outerRadius: CGFloat = 148
   static let innerRadius: CGFloat = 73
   static let hubDiameter: CGFloat = 132
@@ -19,30 +19,21 @@ enum RingLayout {
   static let branchInnerRadius: CGFloat = 166
   static let branchOuterRadius: CGFloat = 236
   static let branchLabelRadius: CGFloat = 201
+  static let optionsInnerRadius: CGFloat = 248
+  static let optionsOuterRadius: CGFloat = 291
+  static let optionsLabelRadius: CGFloat = 269.5
   // Each child covers 66 degrees on the left; the horizontal seam leaves room between labels.
   static let branchStartAngle: Double = 110
   static let branchDividerGap: Double = 4
   // Reserve hover movement around the largest arc so gestures never move the ring's frame.
   static let interactionDiameter: CGFloat = (branchOuterRadius + hoverLift) * 2
-  // Keep controls one padding step beyond the active ring's hover extent.
-  static let compactAccessoryY: CGFloat = centerY + outerRadius + hoverLift + padding
-  static let expandedAccessoryY: CGFloat = centerY + branchOuterRadius + hoverLift + padding
-  static let optionsWidth: CGFloat = 302
-  // Keep expanded Other explanations and hidden-mode fields inside the overlay; excess content scrolls.
-  static func accessoryY(isSealExpanded: Bool) -> CGFloat {
-    isSealExpanded ? expandedAccessoryY : compactAccessoryY
-  }
-
-  static func maximumAccessoryHeight(isSealExpanded: Bool) -> CGFloat {
-    canvasHeight - accessoryY(isSealExpanded: isSealExpanded) - padding
-  }
   // Sending steps live in a bounded popover rather than enlarging the radial menu.
   static let guideWidth: CGFloat = 340
   static let guideHeight: CGFloat = 360
   static let guideTextSize: CGFloat = 12
   // The selected image mode uses a subtle blue wash over the shared glass.
   static let selectedModeOpacity: Double = 0.16
-  static let closeY: CGFloat = 82
+  static let closeY: CGFloat = 16
   static let closeDiameter: CGFloat = 24
   // Small offsets are from the shared four-point visual spacing scale.
   static let hairline: CGFloat = 0.75
@@ -67,21 +58,13 @@ enum RingLayout {
   static var center: CGPoint { CGPoint(x: canvasWidth / 2, y: centerY) }
   static var diameter: CGFloat { outerRadius * 2 }
 
-  static func frame(around cursor: CGPoint, inside bounds: CGRect, accessoryHeight: CGFloat)
-    -> CGRect
-  {
-    // Fit the visible ring and controls. Transparent canvas margins may extend offscreen.
-    let leftMargin = branchOuterRadius + hoverLift + shadowRadius
-    let rightMargin = outerRadius + hoverLift + shadowRadius
-    let topMargin = max(branchOuterRadius + shadowRadius, centerY - closeY + closeDiameter / 2)
-    // Reserve expansion space once, so opening the children never shifts the ring under the cursor.
-    let expandedHeight = min(accessoryHeight, maximumAccessoryHeight(isSealExpanded: true))
-    let bottomMargin = max(
-      outerRadius + shadowRadius, expandedAccessoryY - centerY + expandedHeight)
+  static func frame(around cursor: CGPoint, inside bounds: CGRect) -> CGRect {
+    // Reserve the third layer once so opening it never moves the ring under the pointer.
+    let margin = optionsOuterRadius + shadowRadius
     let adjustedX = fitted(
-      cursor.x, minimum: bounds.minX + leftMargin, maximum: bounds.maxX - rightMargin)
+      cursor.x, minimum: bounds.minX + margin, maximum: bounds.maxX - margin)
     let adjustedY = fitted(
-      cursor.y, minimum: bounds.minY + bottomMargin, maximum: bounds.maxY - topMargin)
+      cursor.y, minimum: bounds.minY + margin, maximum: bounds.maxY - margin)
     return CGRect(
       x: adjustedX - center.x, y: adjustedY - (canvasHeight - center.y),
       width: canvasWidth, height: canvasHeight)
