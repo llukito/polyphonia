@@ -11,7 +11,6 @@ private final class FlowPreview {
 
   init(session: MessageSession) {
     NSApplication.shared.setActivationPolicy(.accessory)
-    NSApplication.shared.finishLaunching()
     let presentation = RingPresentation()
     presentation.isPresented = true
     host = NSHostingView(
@@ -20,7 +19,8 @@ private final class FlowPreview {
         onBrowse: {}, onImportContact: {}, onChooseCover: {}, onChooseAudioCover: {}))
     host.frame = NSRect(origin: .zero, size: RingLayout.canvasSize)
     window = NSWindow(
-      contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+      contentRect: host.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+    window.title = "Polyphonia controls check"
     window.backgroundColor = NSColor(white: 0.12, alpha: 1)
     window.contentView = host
     window.makeKeyAndOrderFront(nil)
@@ -28,12 +28,16 @@ private final class FlowPreview {
   }
 
   func capture(_ name: String) async throws {
-    try await Task.sleep(for: .milliseconds(350))
+    try await processEvents(for: .milliseconds(450))
     host.layoutSubtreeIfNeeded()
     let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
     host.cacheDisplay(in: host.bounds, to: bitmap)
     try bitmap.representation(using: .png, properties: [:])!
       .write(to: URL(fileURLWithPath: "/private/tmp/polyphonia-restored-\(name).png"))
+  }
+
+  private func processEvents(for duration: Duration) async throws {
+    try await Task.sleep(for: duration)
   }
 
   func press(_ label: String) throws {
@@ -53,6 +57,75 @@ private final class FlowPreview {
     guard let button = find(host), button.accessibilityPerformPress?() == true else {
       throw CheckError.failed("Could not press inline review button: \(label)")
     }
+  }
+
+  func enableDecoy() throws {
+    func find(_ view: NSView) -> NSSwitch? {
+      if let control = view as? NSSwitch { return control }
+      return view.subviews.lazy.compactMap { find($0) }.first
+    }
+    guard let control = find(host) else { throw CheckError.failed("Missing Decoy switch") }
+    control.performClick(nil)
+  }
+
+  func checkPanelScrolling() async throws {
+    func panel(in view: NSView) -> AccessoryNativeScrollView? {
+      if let match = view as? AccessoryNativeScrollView { return match }
+      return view.subviews.lazy.compactMap { panel(in: $0) }.first
+    }
+    guard let scrollView = panel(in: host) else {
+      throw CheckError.failed("Missing accessory panel")
+    }
+    let originalMouse = NSEvent.mouseLocation
+    let desktopTop = NSScreen.screens.first!.frame.maxY
+    defer {
+      CGWarpMouseCursorPosition(CGPoint(x: originalMouse.x, y: desktopTop - originalMouse.y))
+    }
+    func move(to point: NSPoint) -> CGPoint {
+      let screen = window.convertPoint(toScreen: scrollView.hostingView.convert(point, to: nil))
+      let target = CGPoint(x: screen.x, y: desktopTop - screen.y)
+      CGWarpMouseCursorPosition(target)
+      CGEvent(
+        mouseEventSource: nil, mouseType: .mouseMoved,
+        mouseCursorPosition: target, mouseButton: .left)?.post(tap: .cghidEventTap)
+      return target
+    }
+    // All probes are outside inputs: the panel gutter, the gap after its toolbar, and a heading.
+    let headingY =
+      RingLayout.padding + RingLayout.fieldHeight + RingLayout.gap
+      + RingLayout.captionSize / 2
+    let probes: [(String, NSPoint)] = [
+      ("panel padding", NSPoint(x: RingLayout.padding / 2, y: headingY)),
+      (
+        "gap between controls",
+        NSPoint(
+          x: RingLayout.accessoryPanelWidth / 2,
+          y: RingLayout.padding + RingLayout.fieldHeight + RingLayout.gap / 2)
+      ),
+      ("non-input heading", NSPoint(x: RingLayout.padding * 2, y: headingY)),
+    ]
+    // Let moving away from Seal settle its expansion before measuring the native viewport.
+    _ = move(to: probes[0].1)
+    try await processEvents(for: .milliseconds(400))
+    for (name, point) in probes {
+      scrollView.contentView.scroll(to: .zero)
+      scrollView.reflectScrolledClipView(scrollView.contentView)
+      let target = move(to: point)
+      try await processEvents(for: .milliseconds(100))
+      let before = scrollView.contentView.bounds.minY
+      let wheel = CGEvent(
+        scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+        wheel1: -80, wheel2: 0, wheel3: 0)!
+      wheel.location = target
+      wheel.post(tap: .cghidEventTap)
+      try await processEvents(for: .milliseconds(500))
+      guard scrollView.contentView.bounds.minY > before else {
+        throw CheckError.failed("Panel did not scroll over \(name)")
+      }
+      print("PASS wheel scrolling over \(name)")
+    }
+    scrollView.contentView.scroll(to: .zero)
+    scrollView.reflectScrolledClipView(scrollView.contentView)
   }
 
   func close() { window.orderOut(nil) }
@@ -144,8 +217,25 @@ struct AiFlowChecks {
     return session
   }
 
-  static func main() async throws {
+  static func main() {
     setbuf(stdout, nil)
+    let application = NSApplication.shared
+    application.setActivationPolicy(.prohibited)
+    Task { @MainActor in
+      do {
+        try await runChecks()
+        print("PASS all AI flow checks")
+        exit(0)
+      } catch {
+        print("FAIL", error)
+        exit(1)
+      }
+    }
+    // A real AppKit event loop is required for posted mouse and wheel events in --ui checks.
+    application.run()
+  }
+
+  private static func runChecks() async throws {
     let suite = "me.polyphonia.ai-flow-tests.\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suite)!
     defer { defaults.removePersistentDomain(forName: suite) }
@@ -240,6 +330,7 @@ struct AiFlowChecks {
       let preview = FlowPreview(session: draft)
       defer { preview.close() }
       try await preview.capture("home")
+      try await preview.checkPanelScrolling()
       draft.requestShortening()
       try await waitUntil("UI shortening did not finish") { !draft.isAiWorking }
       try await preview.capture("shorten-review")
@@ -248,8 +339,12 @@ struct AiFlowChecks {
         draft.message == backend.shorter && draft.aiReview == nil
       }
       try await preview.capture("shorten-applied")
-      draft.hiddenMode = true
-      draft.requestDecoy()
+      try preview.press("Decoy settings")
+      try await preview.capture("decoy-settings")
+      try preview.enableDecoy()
+      try await waitUntil("Decoy toggle did not enable decoy mode") { draft.hiddenMode }
+      try await preview.capture("decoy-fields")
+      try preview.press("Generate decoy with local AI")
       try await waitUntil("UI decoy generation did not finish") { !draft.isAiWorking }
       try await preview.capture("decoy-review")
       try preview.press("Use as decoy")

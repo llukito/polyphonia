@@ -47,10 +47,16 @@ struct RingOverlayView: View {
         accessories
       }
       .frame(
-        width: RingLayout.optionsWidth,
+        width: RingLayout.accessoryPanelWidth,
         height: min(
           accessoryContentHeight, RingLayout.maximumAccessoryHeight(isSealExpanded: isSealExpanded))
       )
+      .clipShape(RoundedRectangle(cornerRadius: RingLayout.capsuleRadius))
+      .overlay {
+        RoundedRectangle(cornerRadius: RingLayout.capsuleRadius)
+          .strokeBorder(RingColor.edge, lineWidth: RingLayout.hairline)
+          .allowsHitTesting(false)
+      }
       .padding(.top, RingLayout.accessoryY(isSealExpanded: isSealExpanded))
       .opacity(presentation.isPresented ? 1 : 0)
       .offset(y: presentation.isPresented || reduceMotion ? 0 : RingLayout.gap)
@@ -216,14 +222,14 @@ struct RingOverlayView: View {
         HStack(spacing: RingLayout.padding) {
           contactMenu
           Button {
-            session.hiddenMode.toggle()
+            reveal(.decoySettings)
           } label: {
-            Label("Hidden", systemImage: session.hiddenMode ? "eye.slash.fill" : "eye.slash")
+            Label("Decoy", systemImage: session.hiddenMode ? "eye.slash.fill" : "eye.slash")
               .foregroundStyle(session.hiddenMode ? RingColor.seal : RingColor.secondary)
           }
           .buttonStyle(.plain)
-          .help("Configure a decoy and passphrase")
-          .disabled(session.isAiWorking || session.aiReview != nil)
+          .help("Learn about decoys and configure a decoy message and passphrase")
+          .accessibilityLabel("Decoy settings")
         }
         .font(.system(size: RingLayout.captionSize))
         .padding(.horizontal, RingLayout.padding)
@@ -245,6 +251,11 @@ struct RingOverlayView: View {
         PlatformPicker(selection: session.platformSelection)
         SecureField("Passphrase · optional", text: $session.passphrase)
           .textFieldStyle(RingFieldStyle())
+        Text(
+          "If the sender used a decoy, enter the agreed passphrase to read the real message. Leave it empty to read the decoy."
+        )
+        .font(.system(size: RingLayout.captionSize))
+        .foregroundStyle(RingColor.secondary)
         Button("Back to Seal / Open") { session.show(.home) }
           .buttonStyle(.plain)
           .font(.system(size: RingLayout.captionSize))

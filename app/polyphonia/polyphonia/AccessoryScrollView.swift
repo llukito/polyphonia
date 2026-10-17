@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-enum AccessoryTarget: Hashable { case message, hidden, aiTools, aiReview, status }
+enum AccessoryTarget: Hashable { case message, decoySettings, hidden, aiTools, aiReview, status }
 
 struct AccessoryScrollRequest {
   let id = UUID()
@@ -36,7 +36,7 @@ extension View {
   }
 }
 
-/// Native hit testing keeps transparent gaps scrollable while preserving the controls above them.
+/// An opaque document and viewport keep the entire panel in the scroll event path.
 struct AccessoryScrollView<Content: View>: NSViewRepresentable {
   let contentWidth: CGFloat
   var scrollRequest: AccessoryScrollRequest? = nil
@@ -56,10 +56,14 @@ struct AccessoryScrollView<Content: View>: NSViewRepresentable {
   private func updateContent(in view: AccessoryNativeScrollView) {
     view.onContentHeightChange = onContentHeightChange
     view.scrollRequest = scrollRequest
+    let documentWidth = contentWidth + RingLayout.padding * 2
     view.hostingView.rootView = AnyView(
       content()
         .frame(width: contentWidth)
+        .padding(RingLayout.padding)
         .fixedSize(horizontal: false, vertical: true)
+        .background(RingColor.panelBackground)
+        .contentShape(Rectangle())
         .coordinateSpace(name: AccessoryDocumentSpace.name)
         .background {
           GeometryReader { geometry in
@@ -68,7 +72,7 @@ struct AccessoryScrollView<Content: View>: NSViewRepresentable {
         }
         .onPreferenceChange(AccessoryContentHeight.self) { [weak view] height in
           guard let view, height.isFinite, height > 0 else { return }
-          view.setDocumentSize(width: contentWidth, height: height)
+          view.setDocumentSize(width: documentWidth, height: height)
         }
         .transformPreference(AccessoryPositionsKey.self) { positions in
           // Include the request ID so an unchanged target still receives a fresh scroll request.
@@ -84,7 +88,7 @@ struct AccessoryScrollView<Content: View>: NSViewRepresentable {
         }
         .preferredColorScheme(.dark))
     // Bootstrap the document before its first geometry preference can be delivered.
-    view.setDocumentSize(width: contentWidth, height: view.hostingView.fittingSize.height)
+    view.setDocumentSize(width: documentWidth, height: view.hostingView.fittingSize.height)
   }
 }
 
@@ -95,13 +99,14 @@ final class AccessoryNativeScrollView: NSScrollView {
   private var completedScrollID: UUID?
   private var reportedHeight: CGFloat?
 
-  override var isOpaque: Bool { false }
+  override var isOpaque: Bool { true }
 
   init() {
     super.init(frame: .zero)
-    drawsBackground = false
-    backgroundColor = .clear
-    contentView.drawsBackground = false
+    drawsBackground = true
+    backgroundColor = NSColor(RingColor.panelBackground)
+    contentView.drawsBackground = true
+    contentView.backgroundColor = backgroundColor
     hasVerticalScroller = true
     hasHorizontalScroller = false
     autohidesScrollers = true
@@ -145,6 +150,8 @@ final class AccessoryNativeScrollView: NSScrollView {
 }
 
 final class AccessoryHostingView: NSHostingView<AnyView> {
+  override var isOpaque: Bool { true }
+
   override func hitTest(_ point: NSPoint) -> NSView? {
     guard !isHidden, alphaValue > 0, bounds.contains(convert(point, from: superview)) else {
       return nil

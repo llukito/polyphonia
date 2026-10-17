@@ -90,8 +90,9 @@ The app bundles the canonical `profiles/platforms.json` from the repository:
   and opens that platform's Stealth steps for resending as a file/document.
 
 The controls sit close to the main ring and move down while the Image/Audio layer
-is open. They scroll when the optional explanations and hidden-mode fields exceed
-the space below the ring, including when the pointer is over a transparent gap.
+is open. A solid background marks the whole scrollable panel. Its padding, headings,
+and gaps between controls scroll along with the inputs when the content exceeds
+the space below the ring.
 App detection does not use browser history, inspect other
 tabs, or request Automation permission. No selected text, keys, passphrases or URLs
 are logged.
@@ -110,10 +111,12 @@ When LM Studio or Ollama has a model available, **Local AI** appears in the cont
    controls return to that field. **Discard** keeps the current message.
 4. Choose **Seal → Image** or **Seal → Audio** to encode the accepted text.
 
-For a decoy, enable **Hidden** and choose **Generate decoy with local AI**. Review
-the suggestion and its permitted byte range, then choose **Use as decoy**. It fills
-the decoy field; add an agreed passphrase before sealing. Without that passphrase,
-the recipient sees the decoy. With it, they see **Message to seal**.
+Choose **Decoy** next to the recipient to jump to **Decoy message**, then enable
+**Use a decoy**. Write harmless text yourself or choose **Generate decoy with local AI**.
+Review an AI suggestion and its permitted byte range, then choose **Use as decoy**.
+Add a passphrase agreed with the recipient before sealing. Without the correct
+passphrase, the recipient sees the decoy. With it, they see **Message to seal**.
+Opening a normal file does not require a passphrase.
 
 Sealing waits until you use or discard a pending suggestion. **Cancel** ignores a
 pending model response. Leaving Seal or closing the ring also cancels it. Suggestions
@@ -141,7 +144,8 @@ installed, with Cargo available in `CARGO_HOME/bin` or `~/.cargo/bin`.
 Run `bash scripts/test-macos-ai-flow.sh` to check AI review, apply, discard, cancel,
 and stale-result handling using deterministic model responses and real PNG/WAV
 round trips. The checks use isolated contacts and pasteboards. Add `--ui` to also
-open a temporary preview, press the inline review buttons, and save layout captures
+open a temporary preview, test wheel scrolling over panel gaps and padding, use the
+Decoy controls and inline review buttons, and save layout captures
 to `/private/tmp/polyphonia-restored-*.png`.
 
 ## Try the carriers

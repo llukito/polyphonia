@@ -264,7 +264,7 @@ final class MessageSession: ObservableObject {
       return
     }
     guard !hiddenMode || (!decoy.isEmpty && !passphrase.isEmpty) else {
-      statusMessage = "Hidden mode needs a decoy message and passphrase."
+      statusMessage = "Enter a decoy message and an agreed passphrase in Decoy settings before sealing."
       return
     }
     guard let contact = selectedContact else {

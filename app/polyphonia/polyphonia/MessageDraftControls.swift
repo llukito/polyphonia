@@ -17,40 +17,11 @@ struct MessageDraftControls: View {
 
       if let review = session.aiReview, review.kind == .shorten { reviewCard(review) }
 
+      decoySettings
+
       if !session.aiServers.isEmpty || session.isAiWorking {
         localAi
           .accessoryTarget(.aiTools)
-      }
-
-      if session.hiddenMode {
-        VStack(alignment: .leading, spacing: RingLayout.gap) {
-          draftEditor("Decoy · visible without passphrase", text: $session.decoy)
-            .disabled(draftLocked)
-
-          if !session.aiServers.isEmpty, !session.isAiWorking {
-            Button(action: session.requestDecoy) {
-              Label("Generate decoy with local AI", systemImage: "sparkles")
-                .foregroundStyle(RingColor.seal)
-                .frame(maxWidth: .infinity, minHeight: RingLayout.fieldHeight)
-                .background { RingAccessoryGlass() }
-            }
-            .buttonStyle(.plain)
-            .disabled(draftLocked || session.selectedAiModel == nil || session.message.isEmpty)
-          }
-
-          if let review = session.aiReview, review.kind == .decoy { reviewCard(review) }
-
-          SecureField("Agreed passphrase", text: $session.passphrase)
-            .textFieldStyle(RingFieldStyle())
-            .disabled(session.isWorking)
-          Text(
-            session.passphrase.isEmpty
-              ? "Add an agreed passphrase before sealing the hidden message."
-              : "The passphrase opens your real message; without it, the recipient sees the decoy."
-          )
-          .foregroundStyle(session.passphrase.isEmpty ? RingColor.warning : RingColor.secondary)
-        }
-        .accessoryTarget(.hidden)
       }
 
       Text("Choose Seal → Image or Audio when ready.")
@@ -59,6 +30,72 @@ struct MessageDraftControls: View {
     .font(.system(size: RingLayout.captionSize))
     .foregroundStyle(RingColor.ink)
     .controlSize(.small)
+  }
+
+  private var decoySettings: some View {
+    VStack(alignment: .leading, spacing: RingLayout.gap) {
+      HStack {
+        Label("Decoy message", systemImage: "eye.slash").fontWeight(.medium)
+        Spacer()
+        Text("Optional").foregroundStyle(RingColor.secondary)
+      }
+      Text(
+        "Without the agreed passphrase, the recipient sees the decoy. With it, they see your real message."
+      )
+      .foregroundStyle(RingColor.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+      Toggle(
+        "Use a decoy",
+        isOn: Binding(
+          get: { session.hiddenMode },
+          set: { enabled in
+            session.hiddenMode = enabled
+            onReveal(enabled ? .hidden : .decoySettings)
+          })
+      )
+      .toggleStyle(.switch)
+      .disabled(draftLocked)
+      .accessibilityLabel("Use a decoy message")
+
+      if session.hiddenMode {
+        VStack(alignment: .leading, spacing: RingLayout.gap) {
+          draftEditor("Decoy text", text: $session.decoy)
+            .disabled(draftLocked)
+          if !session.aiServers.isEmpty, !session.isAiWorking {
+            Button(action: session.requestDecoy) {
+              Label("Generate decoy with local AI", systemImage: "sparkles")
+                .foregroundStyle(RingColor.seal)
+                .frame(maxWidth: .infinity, minHeight: RingLayout.fieldHeight)
+                .background { RingAccessoryGlass() }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Generate decoy with local AI")
+            .disabled(draftLocked || session.selectedAiModel == nil || session.message.isEmpty)
+          } else if session.aiServers.isEmpty {
+            Text(
+              "Write a harmless message above. Local AI can also generate one when LM Studio or Ollama has a model running."
+            )
+            .foregroundStyle(RingColor.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+          }
+          if let review = session.aiReview, review.kind == .decoy { reviewCard(review) }
+          SecureField("Agreed passphrase", text: $session.passphrase)
+            .textFieldStyle(RingFieldStyle())
+            .disabled(session.isWorking)
+          Text(
+            session.passphrase.isEmpty
+              ? "Add a passphrase you have agreed with the recipient before sealing."
+              : "Choose Seal → Image or Audio. The recipient needs this passphrase to read your real message."
+          )
+          .foregroundStyle(session.passphrase.isEmpty ? RingColor.warning : RingColor.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessoryTarget(.hidden)
+      }
+    }
+    .padding(RingLayout.padding)
+    .background { RingAccessoryGlass() }
+    .accessoryTarget(.decoySettings)
   }
 
   private func draftEditor(_ title: String, text: Binding<String>) -> some View {
@@ -115,7 +152,7 @@ struct MessageDraftControls: View {
         .disabled(draftLocked)
         Button("Shorten message", action: session.requestShortening)
           .disabled(draftLocked || session.selectedAiModel == nil || session.message.isEmpty)
-        Text("Suggestions need your review. Enable Hidden to generate a decoy.")
+        Text("Suggestions need your review. The Decoy section also offers AI generation.")
           .foregroundStyle(RingColor.secondary)
       }
     }
