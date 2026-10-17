@@ -293,6 +293,7 @@ pub fn encrypt(request: EncryptRequest) -> Result<EncodedFile, PolyError> {
         algorithm: request.algorithm.into(),
         carrier: request.carrier.into(),
         options: request.options.into(),
+        session_key: None,
     })?;
     Ok(EncodedFile {
         bytes: file.bytes,
@@ -311,6 +312,7 @@ pub fn decrypt(request: DecryptRequest) -> Result<Decrypted, PolyError> {
         my_secret_key: request.my_secret_key,
         my_public_key: request.my_public_key,
         passphrase: request.passphrase,
+        session_keys: Vec::new(),
     })?;
     Ok(Decrypted {
         text: d.text,

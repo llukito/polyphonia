@@ -52,6 +52,7 @@ fn envelope_hidden() {
             algorithm: Algorithm::Fake,
             carrier: CarrierKind::RawDebug,
             options: CarrierOptions::default(),
+            session_key: None,
         })
         .unwrap();
     check_or_write("envelope_hidden.bin", &file.bytes);
@@ -63,6 +64,7 @@ fn envelope_hidden() {
             my_secret_key: me.secret_key.clone(),
             my_public_key: me.public_key.clone(),
             passphrase: Some(HIDDEN_PASSPHRASE.into()),
+            session_keys: Vec::new(),
         })
         .unwrap();
     assert_eq!((d.text.as_str(), d.slot), (HIDDEN_MESSAGE, Slot::B));

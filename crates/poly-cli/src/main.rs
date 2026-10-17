@@ -303,6 +303,7 @@ fn main() -> Result<()> {
                         cover_image,
                         ..Default::default()
                     },
+                    session_key: None,
                 })
                 .map_err(explain)?;
             if out.extension().is_none() {
@@ -332,6 +333,7 @@ fn main() -> Result<()> {
                     my_secret_key,
                     my_public_key,
                     passphrase,
+                    session_keys: Vec::new(),
                 })
                 .map_err(explain)?;
             println!("text:      {}", d.text);
