@@ -3,7 +3,9 @@
 //! Implements docs/SPEC.md §3:
 //! - public key = 1184-byte encapsulation key, secret key = 64-byte seed (d || z);
 //! - seal: `(kem_block, S) = Encapsulate(public key)`, kem_block = 1088 bytes;
-//! - open: `S = Decapsulate(seed, kem_block)`, then the shared slot logic in [`crate::slots`].
+//! - open: `S = Decapsulate(seed, kem_block)`, then the shared slot logic in [`crate::slots`];
+//! - a full message starts a session; session messages carry the session id
+//!   instead of the kem_block and use the session key as S (SPEC §3 "Session mode").
 
 use ml_kem::array::{AssocArraySize, typenum::Unsigned};
 use ml_kem::ml_kem_768::{Ciphertext, DecapsulationKey, EncapsulationKey};
@@ -15,15 +17,13 @@ use poly_core::{Algorithm, Cipher, Identity, OpenRequest, Opened, PolyError, Sea
 use rand::{CryptoRng, Rng};
 use zeroize::{Zeroize, Zeroizing};
 
+use crate::session::{self, Keying};
 use crate::slots::{self, SharedSecret};
 
 /// ML-KEM-768 encapsulation (public) key length (FIPS 203, Table 3: ek = 1184 bytes).
 pub const MLKEM768_PUBLIC_KEY_LEN: usize = 1184;
 /// ML-KEM secret key stored as the seed d || z, 32 + 32 bytes (FIPS 203, §7.1 ML-KEM.KeyGen).
 pub const MLKEM768_SEED_LEN: usize = 64;
-
-/// MVP envelopes always have flags = 0, so the payload has a KEM block (SPEC §2).
-const MVP_FLAGS: u8 = 0;
 
 // The ml-kem crate's sizes must match SPEC; checked when compiling.
 const _: () = {
@@ -50,28 +50,34 @@ impl MlKemCipher {
     /// tests and golden vectors can be reproducible. Real use goes through
     /// [`Cipher::seal`], which uses the operating system's secure RNG.
     ///
-    /// Randomness is drawn in this order: 32 bytes for ML-KEM encapsulation,
-    /// then the slot randomness (see `slots::seal_slots`).
+    /// Randomness is drawn in this order: 32 bytes for ML-KEM encapsulation
+    /// (full messages only), then the slot randomness (see `slots::seal_slots`).
     pub fn seal_with_rng<R: CryptoRng + ?Sized>(
         &self,
         req: &SealRequest,
         rng: &mut R,
     ) -> Result<Sealed, PolyError> {
         let mode = slots::mode(req)?;
-        if req.flags != MVP_FLAGS || req.session_key.is_some() {
-            return Err(PolyError::NotImplemented("SESSION mode in MlKemCipher"));
-        }
-        let (kem_block, shared) = public_key(&req.recipient_public_key)?.encapsulate_with_rng(rng);
-        let shared = shared_secret(shared);
+        let (kem_block, shared, new_session_key) =
+            match session::keying(req.flags, req.session_key.as_ref())? {
+                Keying::Full => {
+                    let (kem_block, shared) =
+                        public_key(&req.recipient_public_key)?.encapsulate_with_rng(rng);
+                    let shared = shared_secret(shared);
+                    let new_session_key = session::derive_session_key(&shared)?;
+                    (kem_block.to_vec(), shared, Some(new_session_key))
+                }
+                Keying::Session(key) => (key.id().to_vec(), session::session_secret(key), None),
+            };
         let (slot_a, slot_b) = slots::seal_slots(&shared, req, mode, rng)?;
         Ok(Sealed {
             payload: Payload {
-                kem_block: kem_block.to_vec(),
+                kem_block,
                 slot_a,
                 slot_b,
             }
             .join(),
-            new_session_key: None,
+            new_session_key,
         })
     }
 }
@@ -117,17 +123,29 @@ impl Cipher for MlKemCipher {
     }
 
     fn open(&self, req: &OpenRequest) -> Result<Opened, PolyError> {
-        if req.flags != MVP_FLAGS || req.session_key.is_some() {
-            return Err(PolyError::NotImplemented("SESSION mode in MlKemCipher"));
+        let keying = session::keying(req.flags, req.session_key.as_ref())?;
+        let payload = Payload::split(&req.payload, Algorithm::MlKem768, req.flags)?;
+        match keying {
+            Keying::Full => {
+                let dk = secret_key(&req.my_secret_key)?;
+                let kem_block =
+                    Ciphertext::try_from(payload.kem_block.as_slice()).map_err(|_| {
+                        PolyError::MalformedPayload("ML-KEM-768 kem_block must be 1088 bytes")
+                    })?;
+                // Never fails: a tampered kem_block gives a different S (implicit
+                // rejection), so slot A then fails to open with DecryptFailed.
+                let shared = shared_secret(dk.decapsulate(&kem_block));
+                let mut opened = slots::open_slots(&shared, &payload.slot_a, &payload.slot_b, req)?;
+                opened.new_session_key = Some(session::derive_session_key(&shared)?);
+                Ok(opened)
+            }
+            Keying::Session(key) => {
+                // No long-term key needed: the session key replaces S.
+                session::check_session_id(&payload.kem_block, key)?;
+                let shared = session::session_secret(key);
+                slots::open_slots(&shared, &payload.slot_a, &payload.slot_b, req)
+            }
         }
-        let dk = secret_key(&req.my_secret_key)?;
-        let payload = Payload::split(&req.payload, Algorithm::MlKem768, MVP_FLAGS)?;
-        let kem_block = Ciphertext::try_from(payload.kem_block.as_slice())
-            .map_err(|_| PolyError::MalformedPayload("ML-KEM-768 kem_block must be 1088 bytes"))?;
-        // Never fails: a tampered kem_block gives a different S (implicit
-        // rejection), so slot A then fails to open with DecryptFailed.
-        let shared = shared_secret(dk.decapsulate(&kem_block));
-        slots::open_slots(&shared, &payload.slot_a, &payload.slot_b, req)
     }
 }
 
@@ -135,6 +153,7 @@ impl Cipher for MlKemCipher {
 mod tests {
     use super::*;
     use poly_core::Slot;
+    use poly_core::envelope::FLAG_SESSION;
 
     #[test]
     fn mlkem_roundtrip() {
@@ -207,5 +226,40 @@ mod tests {
             .unwrap();
         assert_eq!(opened.text, "the real text");
         assert_eq!(opened.slot, Slot::A);
+    }
+
+    /// The session key replaces S, so a session message opens without the
+    /// long-term secret key (SPEC §3 "Session mode").
+    #[test]
+    fn session_message_needs_no_long_term_key() {
+        let me = MlKemCipher.generate_identity().unwrap();
+        let full = MlKemCipher
+            .seal(&request(me.public_key.clone(), None, None))
+            .unwrap();
+        let key = full.new_session_key.unwrap();
+        let cid = poly_core::contact_id(&me.public_key);
+        let aad = poly_core::envelope::header_aad(Algorithm::MlKem768, FLAG_SESSION, &cid);
+        let payload = MlKemCipher
+            .seal(&SealRequest {
+                recipient_public_key: Vec::new(),
+                flags: FLAG_SESSION,
+                session_key: Some(key.clone()),
+                aad,
+                ..request(me.public_key.clone(), None, None)
+            })
+            .unwrap()
+            .payload;
+        let opened = MlKemCipher
+            .open(&OpenRequest {
+                my_secret_key: Vec::new(),
+                contact_id: cid,
+                payload,
+                passphrase: None,
+                aad,
+                flags: FLAG_SESSION,
+                session_key: Some(key),
+            })
+            .unwrap();
+        assert_eq!(opened.text, "the real text");
     }
 }

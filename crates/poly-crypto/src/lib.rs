@@ -9,6 +9,7 @@
 mod fake;
 mod mlkem;
 mod rsa;
+mod session;
 mod slots;
 
 pub use fake::FakeCipher;

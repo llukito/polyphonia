@@ -181,7 +181,8 @@ independent of the full message's key_A/key_B.
   in "Key derivation" with **S replaced by session_key**. Hidden mode works the same.
 - AAD = header bytes 0..15 as always (they include the flags byte).
 - Open: if the payload's session id ≠ `session_id(session_key)` →
-  `DecryptFailed`. Neither seal nor open needs the long-term keys, but the
+  `DecryptFailed`. The real ciphers need neither long-term key for a session
+  message (FakeCipher still uses the public key in its fake tag), but the
   engine still checks contact_id.
 - Request rules: SESSION flag set without a session key, or a session key
   without the flag → `InvalidRequest`; any other flag bit → `InvalidRequest`;
