@@ -2,6 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 import Combine
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 final class RingPresentation: ObservableObject {
@@ -24,6 +25,7 @@ final class RingWindowController {
   private var transitionID = UUID()
   private var anchor: CGPoint?
   private var geometrySubscription: AnyCancellable?
+  private var filePicker: NSOpenPanel?
 
   var isPresented: Bool { presentation.isPresented }
 
@@ -47,7 +49,9 @@ final class RingWindowController {
       rootView: RingOverlayView(
         session: session, presentation: presentation,
         onDismiss: { [weak self] in self?.dismiss() },
-        onQuit: { NSApp.terminate(nil) }))
+        onQuit: { NSApp.terminate(nil) },
+        onBrowse: { [weak self] in self?.browseReceivedFile() },
+        onImportContact: { [weak self] in self?.browsePublicKey() }))
     geometrySubscription = presentation.$accessoryHeight.removeDuplicates().sink {
       [weak self] height in
       self?.positionAtAnchor(accessoryHeight: height)
@@ -75,6 +79,10 @@ final class RingWindowController {
   }
 
   func dismiss(restoreFocus: Bool = true) {
+    if let filePicker {
+      filePicker.cancel(nil)
+      return
+    }
     guard window.isVisible else { return }
     removeMonitors()
     let closingTransition = UUID()
@@ -90,10 +98,55 @@ final class RingWindowController {
   }
 
   func closeImmediately() {
+    let pickerToCancel = filePicker
+    filePicker = nil
+    pickerToCancel?.cancel(nil)
     transitionID = UUID()
     removeMonitors()
     presentation.isPresented = false
     window.orderOut(nil)
+  }
+
+  private func browseReceivedFile() {
+    chooseFile(title: "Open a received Polyphonia file", prompt: "Open", types: [.item]) {
+      [weak self] url in
+      self?.session.open(fileURL: url)
+    }
+  }
+
+  private func browsePublicKey() {
+    chooseFile(title: "Import a contact public key", prompt: "Import", types: [.data]) {
+      [weak self] url in
+      self?.session.importContact(fileURL: url)
+    }
+  }
+
+  private func chooseFile(
+    title: String, prompt: String, types: [UTType], onSelection: @escaping (URL) -> Void
+  ) {
+    guard filePicker == nil, !session.isWorking else { return }
+    let panel = NSOpenPanel()
+    panel.title = title
+    panel.prompt = prompt
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = false
+    panel.allowedContentTypes = types
+    panel.level = .modalPanel
+    filePicker = panel
+
+    // The file picker owns focus until it finishes; the floating ring must not cover or dismiss it.
+    removeMonitors()
+    window.orderOut(nil)
+    NSApp.activate(ignoringOtherApps: true)
+    panel.begin { [weak self, weak panel] response in
+      guard let self, let panel, self.filePicker === panel else { return }
+      self.filePicker = nil
+      NSApp.activate(ignoringOtherApps: true)
+      self.window.makeKeyAndOrderFront(nil)
+      self.installMonitors()
+      if response == .OK, let url = panel.url { onSelection(url) }
+    }
   }
 
   func releaseShortcut() {
