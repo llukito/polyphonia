@@ -132,13 +132,19 @@ struct RingOverlayView: View {
       } else {
         switch session.screen {
         case .home:
-          Image(systemName: hovered?.symbol ?? "waveform")
-            .font(.system(size: RingLayout.titleSize, weight: .light))
-            .foregroundStyle(
-              hovered == .seal || hovered == .sealImage || hovered == .sealAudio
-                ? RingColor.seal : RingColor.ink
-            )
-            .contentTransition(.symbolEffect(.replace))
+          if let hovered {
+            Image(systemName: hovered.symbol)
+              .font(.system(size: RingLayout.titleSize, weight: .light))
+              .foregroundStyle(
+                hovered == .seal || hovered == .sealImage || hovered == .sealAudio
+                  ? RingColor.seal : RingColor.ink
+              )
+              .contentTransition(.symbolEffect(.replace))
+          } else {
+            ShalvaMascot(animates: !reduceMotion)
+              .frame(width: 52, height: 48)
+              .accessibilityHidden(false)
+          }
           Text(hovered?.title ?? "Polyphonia")
             .font(.system(size: RingLayout.titleSize, weight: .medium))
             .contentTransition(.opacity)

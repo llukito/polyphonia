@@ -4,6 +4,8 @@ Select text in another app and press **Command + Shift + P**. A glass ring
 opens around the cursor with **Seal** on the left and **Open** on the right.
 The ring uses native glass, spring motion, and a quieter animation when macOS
 Reduce Motion is enabled.
+The center hub features Shalva, the dancing crab in Georgian dress; his GIF pauses
+when Reduce Motion is enabled.
 
 - **Seal** expands into a second layer on the left: **Image** above and **Audio**
   below. Move through Seal into either child. Choose the recipient and optional
