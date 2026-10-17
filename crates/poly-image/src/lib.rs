@@ -1,6 +1,7 @@
 //! Image carriers for Polyphonia (role 2).
 
 pub mod damage;
+mod load;
 mod robust;
 mod stealth;
 

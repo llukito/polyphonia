@@ -7,17 +7,10 @@ use std::io::Cursor;
 
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
-use image::{DynamicImage, ImageFormat, ImageReader, Limits};
+use image::{DynamicImage, ImageFormat};
 use poly_core::PolyError;
 
-/// Largest width or height accepted from an input file. 16384 px is far above
-/// any messenger photo limit (WhatsApp/Telegram cap around 1600-2560 px) and
-/// keeps a hostile header from making us allocate gigabytes.
-const MAX_INPUT_SIDE: u32 = 16_384;
-
-/// Upper bound on decoder allocations: a 16384 x 16384 RGBA8 image is 1 GiB,
-/// so allow exactly that (4 bytes per pixel).
-const MAX_DECODE_ALLOC: u64 = MAX_INPUT_SIDE as u64 * MAX_INPUT_SIDE as u64 * 4;
+use crate::load::{image_err, load_image};
 
 /// Lowest JPEG quality the `image` crate's encoder accepts.
 pub const JPEG_QUALITY_MIN: u8 = 1;
@@ -65,7 +58,7 @@ pub fn damage_image(file: &[u8], damage: ImageDamage) -> Result<DamagedImage, Po
         ));
     }
 
-    let mut img = load(file)?;
+    let mut img = load_image(file)?;
     if let Some(max_side) = damage.max_side {
         img = shrink_to_fit(img, max_side);
     }
@@ -76,12 +69,12 @@ pub fn damage_image(file: &[u8], damage: ImageDamage) -> Result<DamagedImage, Po
             // JPEG has no alpha channel; messengers drop it the same way.
             JpegEncoder::new_with_quality(&mut bytes, quality)
                 .encode_image(&img.to_rgb8())
-                .map_err(carrier_err)?;
+                .map_err(image_err)?;
             "jpg"
         }
         None => {
             img.write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
-                .map_err(carrier_err)?;
+                .map_err(image_err)?;
             "png"
         }
     };
@@ -93,32 +86,12 @@ pub fn damage_image(file: &[u8], damage: ImageDamage) -> Result<DamagedImage, Po
     })
 }
 
-fn load(file: &[u8]) -> Result<DynamicImage, PolyError> {
-    let mut limits = Limits::default();
-    limits.max_image_width = Some(MAX_INPUT_SIDE);
-    limits.max_image_height = Some(MAX_INPUT_SIDE);
-    limits.max_alloc = Some(MAX_DECODE_ALLOC);
-
-    let mut reader = ImageReader::new(Cursor::new(file))
-        .with_guessed_format()
-        .map_err(|e| PolyError::Carrier(e.to_string()))?;
-    if reader.format().is_none() {
-        return Err(PolyError::Carrier("not a recognized image format".into()));
-    }
-    reader.limits(limits);
-    reader.decode().map_err(carrier_err)
-}
-
 fn shrink_to_fit(img: DynamicImage, max_side: u32) -> DynamicImage {
     if img.width().max(img.height()) <= max_side {
         return img;
     }
     // `resize` keeps the aspect ratio and fits inside the box.
     img.resize(max_side, max_side, RESIZE_FILTER)
-}
-
-fn carrier_err(e: image::ImageError) -> PolyError {
-    PolyError::Carrier(e.to_string())
 }
 
 #[cfg(test)]
