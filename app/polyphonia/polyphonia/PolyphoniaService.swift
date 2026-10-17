@@ -30,7 +30,19 @@ private func carrierSummary(_ carrier: CarrierKind, byteCount: Int) -> String {
 }
 
 /// Small boundary between SwiftUI and the generated Rust API.
-final class PolyphoniaService: @unchecked Sendable {
+protocol PolyphoniaBackend: Sendable {
+  func detectAiServers() -> [AiServer]
+  func shorten(message: String, server: AiServer, model: String) throws -> AiShortenSuggestion
+  func generateDecoy(message: String, server: AiServer, model: String) throws -> AiDecoySuggestion
+  func demoIdentity() throws -> DemoIdentity
+  func seal(
+    message: String, recipientPublicKey: Data, decoy: String?, passphrase: String?,
+    carrier: CarrierKind, coverImage: Data?, coverAudio: Data?
+  ) throws -> SealedCarrier
+  func open(file: Data, passphrase: String?) throws -> OpenedMessage
+}
+
+final class PolyphoniaService: PolyphoniaBackend, @unchecked Sendable {
   private let identityStore = KeychainIdentityStore()
 
   func detectAiServers() -> [AiServer] { aiDetectServers() }

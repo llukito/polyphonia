@@ -7,25 +7,18 @@ struct RingMenu<Hub: View>: View {
   let trailing: RingAction
   let isPresented: Bool
   let isWorking: Bool
-  var utilities: [RingAction] = []
-  var hoverLocation: CGPoint? = nil
-  var showBranches = false
   var releaseRequest: RingReleaseRequest? = nil
   var onExpansionChanged: (Bool) -> Void = { _ in }
-  var onHoverChanged: (RingAction?) -> Void = { _ in }
-  var onOuterRelease: (CGPoint) -> Void = { _ in }
-  var onPointerMoved: (CGPoint) -> Void = { _ in }
   let onAction: (RingAction) -> Void
   @ViewBuilder var hub: (RingAction?) -> Hub
 
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  @Namespace private var pointerSpace
   @State private var interaction = RingInteraction()
   @State private var isDragging = false
 
   var body: some View {
     ZStack {
-      if leading == .seal, interaction.isSealExpanded || showBranches {
+      if leading == .seal, interaction.isSealExpanded {
         ForEach(RingBranch.allCases, id: \.self) { branch in
           RingTile(
             action: branch.action, shape: RingBranchSector(branch: branch),
@@ -37,20 +30,6 @@ struct RingMenu<Hub: View>: View {
           .scale(scale: RingLayout.collapsedScale, anchor: .trailing).combined(with: .opacity))
       }
 
-      ForEach(Array(utilities.enumerated()), id: \.element.id) { index, action in
-        let angles = RingUtilityArc.angles(for: index, count: utilities.count)
-        let middle = (angles.lowerBound + angles.upperBound) / 2 * .pi / 180
-        RingTile(
-          action: action, shape: RingUtilitySector(index: index, count: utilities.count),
-          diameter: RingLayout.interactionDiameter,
-          labelOffset: CGSize(
-            width: cos(middle) * RingLayout.branchLabelRadius,
-            height: sin(middle) * RingLayout.branchLabelRadius),
-          tint: RingColor.open, isHighlighted: interaction.hoveredAction == action,
-          isWorking: isWorking && action != .cancelAi, compactLabel: true,
-          onAction: { onAction(action) })
-      }
-
       sector(action: leading, side: .left, tint: RingColor.seal)
       sector(action: trailing, side: .right, tint: RingColor.open)
 
@@ -58,20 +37,18 @@ struct RingMenu<Hub: View>: View {
       Color.clear
         .contentShape(Circle())
         .gesture(
-          DragGesture(minimumDistance: 0, coordinateSpace: .named(pointerSpace))
+          DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { value in
-              guard isPresented, !isWorking || utilities.contains(.cancelAi) else { return }
+              guard isPresented, !isWorking else { return }
               isDragging = true
-              onPointerMoved(value.location)
-              interaction.update(
-                at: value.location, leading: leading, trailing: trailing, utilities: utilities)
+              interaction.update(at: value.location, leading: leading, trailing: trailing)
             }
             .onEnded { value in
               isDragging = false
               release(at: value.location)
             }
         )
-        .allowsHitTesting(isPresented && (!isWorking || utilities.contains(.cancelAi)))
+        .allowsHitTesting(isPresented && !isWorking)
         .accessibilityHidden(true)
 
       hub(interaction.hoveredAction)
@@ -85,7 +62,14 @@ struct RingMenu<Hub: View>: View {
         .allowsHitTesting(leading == .save || leading == .copy)
     }
     .frame(width: RingLayout.interactionDiameter, height: RingLayout.interactionDiameter)
-    .coordinateSpace(name: pointerSpace)
+    .onContinuousHover(coordinateSpace: .local) { phase in
+      guard isPresented, !isWorking else { return }
+      switch phase {
+      case .active(let point): interaction.update(at: point, leading: leading, trailing: trailing)
+      case .ended:
+        if !isDragging { interaction.reset() }
+      }
+    }
     .scaleEffect(isPresented || reduceMotion ? 1 : RingLayout.collapsedScale)
     .rotationEffect(.degrees(isPresented || reduceMotion ? 0 : RingLayout.collapsedRotation))
     .blur(radius: isPresented || reduceMotion ? 0 : RingLayout.collapsedBlur)
@@ -104,21 +88,10 @@ struct RingMenu<Hub: View>: View {
     .onChange(of: isWorking) { _, working in
       if working { reset() }
     }
-    .onChange(of: hoverLocation) { _, point in
-      guard isPresented, !isWorking || utilities.contains(.cancelAi) else { return }
-      if let point {
-        interaction.update(at: point, leading: leading, trailing: trailing, utilities: utilities)
-      } else if !isDragging {
-        interaction.reset()
-      }
-    }
     .onChange(of: leading) { _, _ in reset() }
     .onChange(of: trailing) { _, _ in reset() }
     .onChange(of: interaction.isSealExpanded) { _, expanded in
       onExpansionChanged(expanded)
-    }
-    .onChange(of: interaction.hoveredAction) { _, hovered in
-      onHoverChanged(hovered)
     }
     .onChange(of: releaseRequest) { _, request in
       if let request { release(at: request.location) }
@@ -126,16 +99,9 @@ struct RingMenu<Hub: View>: View {
   }
 
   private func release(at location: CGPoint) {
-    guard isPresented, !isWorking || utilities.contains(.cancelAi) else { return }
-    let center = RingLayout.interactionDiameter / 2
-    if hypot(location.x - center, location.y - center) >= RingLayout.optionsInnerRadius {
-      onOuterRelease(location)
-      return
-    }
-    if let action = interaction.release(
-      at: location, leading: leading, trailing: trailing, utilities: utilities)
-    {
-      if !isWorking || action == .cancelAi { onAction(action) }
+    guard isPresented, !isWorking else { return }
+    if let action = interaction.release(at: location, leading: leading, trailing: trailing) {
+      onAction(action)
     }
   }
 
@@ -147,7 +113,7 @@ struct RingMenu<Hub: View>: View {
   private func sector(action: RingAction, side: RingSide, tint: Color) -> some View {
     let highlighted =
       interaction.hoveredAction == action
-      || (action == .seal && (interaction.isSealExpanded || showBranches))
+      || (action == .seal && interaction.isSealExpanded)
     return RingTile(
       action: action, shape: RingSector(side: side), diameter: RingLayout.diameter,
       labelOffset: CGSize(width: side.direction * RingLayout.labelRadius, height: 0),

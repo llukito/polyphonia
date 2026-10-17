@@ -9,7 +9,6 @@ struct RingTile<Sector: Shape>: View {
   let tint: Color
   let isHighlighted: Bool
   let isWorking: Bool
-  var compactLabel = false
   let onAction: () -> Void
 
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -34,22 +33,15 @@ struct RingTile<Sector: Shape>: View {
             colors: [.white.opacity(emphasized ? 0.38 : 0.24), .white.opacity(0.04)],
             startPoint: .top, endPoint: .bottom), lineWidth: RingLayout.hairline)
 
-        VStack(spacing: compactLabel ? RingLayout.smallGap : RingLayout.gap) {
+        VStack(spacing: RingLayout.gap) {
           Image(systemName: action.symbol)
-            .font(.system(
-              size: compactLabel ? RingLayout.utilityIconSize : RingLayout.iconSize,
-              weight: .light))
+            .font(.system(size: RingLayout.iconSize, weight: .light))
             .contentTransition(.symbolEffect(.replace))
           Text(action.title)
-            .font(.system(
-              size: compactLabel ? RingLayout.tinySize : RingLayout.captionSize,
-              weight: .medium))
+            .font(.system(size: RingLayout.captionSize, weight: .medium))
             .tracking(0.3)
-            .lineLimit(1)
-            .minimumScaleFactor(RingLayout.minimumLabelScale)
             .contentTransition(.opacity)
         }
-        .frame(width: compactLabel ? RingLayout.utilityLabelWidth : nil)
         .foregroundStyle(emphasized ? tint : RingColor.ink)
         .scaleEffect(emphasized && !reduceMotion ? RingLayout.labelHoverScale : 1)
         .offset(labelOffset)

@@ -8,6 +8,8 @@ import UniformTypeIdentifiers
 final class RingPresentation: ObservableObject {
   @Published var isPresented = false
   @Published var releaseRequest: RingReleaseRequest?
+  // The initial toolbar, one gap, and demo caption; the view supplies its measured size.
+  @Published var accessoryHeight = RingLayout.fieldHeight + RingLayout.gap + RingLayout.captionSize
 }
 
 /// Owns the native overlay and its dismissal. The view only owns the ring's appearance.
@@ -22,6 +24,7 @@ final class RingWindowController {
   private var sourceApplication: NSRunningApplication?
   private var transitionID = UUID()
   private var anchor: CGPoint?
+  private var geometrySubscription: AnyCancellable?
   private var filePicker: NSOpenPanel?
 
   var isPresented: Bool { presentation.isPresented }
@@ -51,6 +54,10 @@ final class RingWindowController {
         onImportContact: { [weak self] in self?.browsePublicKey() },
         onChooseCover: { [weak self] in self?.browseImageCover() },
         onChooseAudioCover: { [weak self] in self?.browseAudioCover() }))
+    geometrySubscription = presentation.$accessoryHeight.removeDuplicates().sink {
+      [weak self] height in
+      self?.positionAtAnchor(accessoryHeight: height)
+    }
   }
 
   func show(selection: SelectionCapture, sourceApplication: NSRunningApplication?) {
@@ -59,7 +66,7 @@ final class RingWindowController {
     presentation.releaseRequest = nil
     session.beginSession(with: selection, sourceApplication: sourceApplication)
     anchor = NSEvent.mouseLocation
-    positionAtAnchor()
+    positionAtAnchor(accessoryHeight: presentation.accessoryHeight)
     installMonitors()
     NSApp.activate(ignoringOtherApps: true)
     window.makeKeyAndOrderFront(nil)
@@ -79,6 +86,8 @@ final class RingWindowController {
       return
     }
     guard window.isVisible else { return }
+    session.cancelAiRequest()
+    session.discardAiReview()
     removeMonitors()
     let closingTransition = UUID()
     transitionID = closingTransition
@@ -93,6 +102,8 @@ final class RingWindowController {
   }
 
   func closeImmediately() {
+    session.cancelAiRequest()
+    session.discardAiReview()
     let pickerToCancel = filePicker
     filePicker = nil
     pickerToCancel?.cancel(nil)
@@ -177,11 +188,11 @@ final class RingWindowController {
       ? RingMotion.reduced : RingMotion.appear
   }
 
-  private func positionAtAnchor() {
+  private func positionAtAnchor(accessoryHeight: CGFloat) {
     guard let anchor else { return }
     let screen = NSScreen.screens.first(where: { $0.frame.contains(anchor) }) ?? NSScreen.main
     guard let bounds = screen?.visibleFrame else { return }
-    let frame = RingLayout.frame(around: anchor, inside: bounds)
+    let frame = RingLayout.frame(around: anchor, inside: bounds, accessoryHeight: accessoryHeight)
     let animate =
       presentation.isPresented && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     window.setFrame(frame, display: true, animate: animate)
