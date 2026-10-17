@@ -8,3 +8,5 @@
 # Xcode
 app/**/xcuserdata/
 app/**/DerivedData/
+# Personal Claude Code settings (never committed)
+.claude/settings.local.json
