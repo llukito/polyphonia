@@ -1,0 +1,152 @@
+//! Property tests for MlKemCipher::open: it never panics, random input never
+//! decrypts, and a single flipped bit anywhere follows the SPEC §3 open rules.
+
+use std::sync::OnceLock;
+
+use poly_core::envelope::header_aad;
+use poly_core::payload::{KEM_BLOCK_LEN_MLKEM768, SLOT_BLOCK, SLOT_OVERHEAD};
+use poly_core::{Algorithm, Cipher, OpenRequest, Opened, PolyError, SealRequest, Slot, contact_id};
+use poly_crypto::MlKemCipher;
+use proptest::prelude::*;
+
+/// Cases for tests that run Argon2id (~19 MiB, slow in debug builds) per case.
+const SLOW_CASES: u32 = 24;
+/// Cases for tests without Argon2id.
+const FAST_CASES: u32 = 256;
+/// Longest arbitrary payload tried: a bit more than a short ML-KEM payload.
+const MAX_RANDOM_PAYLOAD: usize = 1_400;
+/// Well-formed payloads use 1..=MAX_BLOCKS padded 16-byte blocks per slot.
+const MAX_BLOCKS: usize = 4;
+/// Longest arbitrary secret key tried (the real one is 64 bytes).
+const MAX_RANDOM_KEY: usize = 100;
+/// The real ML-KEM seed length (SPEC §3).
+const SEED_LEN: usize = 64;
+
+const REAL: &str = "the real message";
+const DECOY: &str = "a harmless decoy";
+const PASS: &str = "correct horse";
+
+struct Fixture {
+    seed: Vec<u8>,
+    contact_id: [u8; 8],
+    aad: [u8; 15],
+    hidden_payload: Vec<u8>,
+}
+
+/// One identity and one hidden-mode payload, shared by every case.
+fn fixture() -> &'static Fixture {
+    static FIXTURE: OnceLock<Fixture> = OnceLock::new();
+    FIXTURE.get_or_init(|| {
+        let me = MlKemCipher.generate_identity().unwrap();
+        let cid = contact_id(&me.public_key);
+        let aad = header_aad(Algorithm::MlKem768, 0, &cid);
+        let hidden_payload = MlKemCipher
+            .seal(&SealRequest {
+                recipient_public_key: me.public_key,
+                contact_id: cid,
+                message: REAL.into(),
+                decoy: Some(DECOY.into()),
+                passphrase: Some(PASS.into()),
+                aad,
+            })
+            .unwrap();
+        Fixture {
+            seed: me.secret_key,
+            contact_id: cid,
+            aad,
+            hidden_payload,
+        }
+    })
+}
+
+fn open(key: &[u8], payload: &[u8], passphrase: Option<&str>) -> Result<Opened, PolyError> {
+    let f = fixture();
+    MlKemCipher.open(&OpenRequest {
+        my_secret_key: key.to_vec(),
+        contact_id: f.contact_id,
+        payload: payload.to_vec(),
+        passphrase: passphrase.map(Into::into),
+        aad: f.aad,
+    })
+}
+
+/// Arbitrary bytes, or random bytes with exactly the shape of an ML-KEM
+/// payload (so decapsulation and both slot decryptions really run).
+fn payloads() -> impl Strategy<Value = Vec<u8>> {
+    prop_oneof![
+        proptest::collection::vec(any::<u8>(), 0..MAX_RANDOM_PAYLOAD),
+        (1..=MAX_BLOCKS).prop_flat_map(|blocks| {
+            let slot = SLOT_OVERHEAD + blocks * SLOT_BLOCK;
+            proptest::collection::vec(any::<u8>(), KEM_BLOCK_LEN_MLKEM768 + 2 * slot)
+        }),
+    ]
+}
+
+/// A valid-length random seed, or a key of arbitrary length.
+fn keys() -> impl Strategy<Value = Vec<u8>> {
+    prop_oneof![
+        proptest::collection::vec(any::<u8>(), SEED_LEN),
+        proptest::collection::vec(any::<u8>(), 0..MAX_RANDOM_KEY),
+    ]
+}
+
+/// What SPEC §3 says opening the hidden payload gives after flipping a bit
+/// at `index`, with or without the right passphrase.
+fn expected_after_flip(index: usize, with_pass: bool) -> Result<Opened, PolyError> {
+    let len = fixture().hidden_payload.len();
+    let slot_a_end = KEM_BLOCK_LEN_MLKEM768 + (len - KEM_BLOCK_LEN_MLKEM768) / 2;
+    let a = Ok(Opened {
+        text: DECOY.into(),
+        slot: Slot::A,
+    });
+    let b = Ok(Opened {
+        text: REAL.into(),
+        slot: Slot::B,
+    });
+    if index < KEM_BLOCK_LEN_MLKEM768 {
+        // Wrong S (implicit rejection): neither slot opens.
+        Err(PolyError::DecryptFailed)
+    } else if index < slot_a_end {
+        // Slot A broken: only slot B can open, and only with the passphrase.
+        if with_pass {
+            b
+        } else {
+            Err(PolyError::DecryptFailed)
+        }
+    } else {
+        // Slot B broken: slot A (the decoy) opens, silently.
+        a
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(FAST_CASES))]
+
+    #[test]
+    fn random_input_never_opens_without_passphrase(payload in payloads(), key in keys()) {
+        prop_assert!(open(&key, &payload, None).is_err());
+    }
+
+    #[test]
+    fn flipped_bit_without_passphrase(index in 0..fixture().hidden_payload.len(), bit in 0..8u8) {
+        let mut payload = fixture().hidden_payload.clone();
+        payload[index] ^= 1 << bit;
+        prop_assert_eq!(open(&fixture().seed, &payload, None), expected_after_flip(index, false));
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(SLOW_CASES))]
+
+    #[test]
+    fn random_input_never_opens_with_passphrase(payload in payloads(), key in keys(), pass in "[a-z]{0,12}") {
+        prop_assert!(open(&key, &payload, Some(&pass)).is_err());
+    }
+
+    #[test]
+    fn flipped_bit_with_passphrase(index in 0..fixture().hidden_payload.len(), bit in 0..8u8) {
+        let mut payload = fixture().hidden_payload.clone();
+        payload[index] ^= 1 << bit;
+        prop_assert_eq!(open(&fixture().seed, &payload, Some(PASS)), expected_after_flip(index, true));
+    }
+}

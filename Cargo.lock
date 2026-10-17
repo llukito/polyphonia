@@ -1481,6 +1481,7 @@ dependencies = [
  "hkdf",
  "ml-kem",
  "poly-core",
+ "proptest",
  "rand 0.10.3",
  "rsa",
  "sha2",

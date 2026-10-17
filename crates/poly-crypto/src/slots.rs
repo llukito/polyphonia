@@ -21,7 +21,7 @@ use poly_core::payload::{
 use poly_core::{
     ContactId, OpenRequest, Opened, PolyError, SealRequest, Slot, slot_pad, slot_unpad,
 };
-use rand::Rng;
+use rand::CryptoRng;
 use sha2::Sha256;
 use zeroize::Zeroizing;
 
@@ -102,10 +102,15 @@ fn key_b(
 }
 
 /// Encrypt one padded plaintext into `nonce || ciphertext || tag` with a fresh random nonce.
-fn encrypt_slot(key: &SlotKey, padded: &[u8], aad: &[u8]) -> Result<Vec<u8>, PolyError> {
+fn encrypt_slot<R: CryptoRng + ?Sized>(
+    key: &SlotKey,
+    padded: &[u8],
+    aad: &[u8],
+    rng: &mut R,
+) -> Result<Vec<u8>, PolyError> {
     // A new random nonce for every slot: never reuse a nonce with the same key.
     let mut nonce = [0u8; NONCE_LEN];
-    rand::rng().fill_bytes(&mut nonce);
+    rng.fill_bytes(&mut nonce);
 
     let ciphertext_and_tag = Aes256Gcm::new(key)
         .encrypt(
@@ -140,10 +145,14 @@ fn open_slot(key: &SlotKey, slot: &[u8], aad: &[u8]) -> Option<Zeroizing<String>
 }
 
 /// Build slot A and slot B (equal length) for a checked request.
-pub(crate) fn seal_slots(
+///
+/// Randomness is drawn from `rng` in this order: slot A nonce, then slot B
+/// nonce (hidden mode) or the random slot B bytes (normal mode).
+pub(crate) fn seal_slots<R: CryptoRng + ?Sized>(
     shared: &SharedSecret,
     req: &SealRequest,
     mode: Mode<'_>,
+    rng: &mut R,
 ) -> Result<(Vec<u8>, Vec<u8>), PolyError> {
     let slot_a_text = match mode {
         Mode::Normal => req.message.as_str(),
@@ -153,7 +162,7 @@ pub(crate) fn seal_slots(
     let padded = padded_len(slot_a_text.len().max(req.message.len()));
 
     let plaintext_a = Zeroizing::new(slot_pad(slot_a_text, padded)?);
-    let slot_a = encrypt_slot(&key_a(shared)?, &plaintext_a, &req.aad)?;
+    let slot_a = encrypt_slot(&key_a(shared)?, &plaintext_a, &req.aad, rng)?;
     let slot_b = match mode {
         Mode::Hidden { passphrase, .. } => {
             let plaintext_b = Zeroizing::new(slot_pad(&req.message, padded)?);
@@ -161,12 +170,13 @@ pub(crate) fn seal_slots(
                 &key_b(shared, passphrase, &req.contact_id)?,
                 &plaintext_b,
                 &req.aad,
+                rng,
             )?
         }
         Mode::Normal => {
             // Random bytes look exactly like a real encrypted slot of the same length.
             let mut random = vec![0u8; slot_len(padded)];
-            rand::rng().fill_bytes(&mut random);
+            rng.fill_bytes(&mut random);
             random
         }
     };

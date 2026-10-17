@@ -20,3 +20,4 @@ zeroize.workspace = true
 
 [dev-dependencies]
 poly-core = { workspace = true, features = ["test-utils"] }
+proptest.workspace = true

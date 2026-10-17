@@ -12,7 +12,7 @@ use ml_kem::{
 };
 use poly_core::payload::{KEM_BLOCK_LEN_MLKEM768, Payload};
 use poly_core::{Algorithm, Cipher, Identity, OpenRequest, Opened, PolyError, SealRequest};
-use rand::Rng;
+use rand::{CryptoRng, Rng};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::slots::{self, SharedSecret};
@@ -35,6 +35,40 @@ const _: () = {
 /// Post-quantum cipher: ML-KEM-768 + AES-256-GCM.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MlKemCipher;
+
+impl MlKemCipher {
+    /// Deterministic identity from a 64-byte seed (used for golden vectors).
+    pub fn identity_from_seed(seed: &[u8]) -> Result<Identity, PolyError> {
+        let dk = secret_key(seed)?;
+        Ok(Identity {
+            public_key: dk.encapsulation_key().to_bytes().to_vec(),
+            secret_key: seed.to_vec(),
+        })
+    }
+
+    /// [`Cipher::seal`] with a caller-chosen random number generator, so
+    /// tests and golden vectors can be reproducible. Real use goes through
+    /// [`Cipher::seal`], which uses the operating system's secure RNG.
+    ///
+    /// Randomness is drawn in this order: 32 bytes for ML-KEM encapsulation,
+    /// then the slot randomness (see `slots::seal_slots`).
+    pub fn seal_with_rng<R: CryptoRng + ?Sized>(
+        &self,
+        req: &SealRequest,
+        rng: &mut R,
+    ) -> Result<Vec<u8>, PolyError> {
+        let mode = slots::mode(req)?;
+        let (kem_block, shared) = public_key(&req.recipient_public_key)?.encapsulate_with_rng(rng);
+        let shared = shared_secret(shared);
+        let (slot_a, slot_b) = slots::seal_slots(&shared, req, mode, rng)?;
+        Ok(Payload {
+            kem_block: kem_block.to_vec(),
+            slot_a,
+            slot_b,
+        }
+        .join())
+    }
+}
 
 /// Parse a 1184-byte encapsulation key.
 fn public_key(bytes: &[u8]) -> Result<EncapsulationKey, PolyError> {
@@ -69,25 +103,11 @@ impl Cipher for MlKemCipher {
     fn generate_identity(&self) -> Result<Identity, PolyError> {
         let mut seed = Zeroizing::new([0u8; MLKEM768_SEED_LEN]);
         rand::rng().fill_bytes(&mut seed[..]);
-        let dk = secret_key(&seed[..])?;
-        Ok(Identity {
-            public_key: dk.encapsulation_key().to_bytes().to_vec(),
-            secret_key: seed.to_vec(),
-        })
+        Self::identity_from_seed(&seed[..])
     }
 
     fn seal(&self, req: &SealRequest) -> Result<Vec<u8>, PolyError> {
-        let mode = slots::mode(req)?;
-        let (kem_block, shared) =
-            public_key(&req.recipient_public_key)?.encapsulate_with_rng(&mut rand::rng());
-        let shared = shared_secret(shared);
-        let (slot_a, slot_b) = slots::seal_slots(&shared, req, mode)?;
-        Ok(Payload {
-            kem_block: kem_block.to_vec(),
-            slot_a,
-            slot_b,
-        }
-        .join())
+        self.seal_with_rng(req, &mut rand::rng())
     }
 
     fn open(&self, req: &OpenRequest) -> Result<Opened, PolyError> {
