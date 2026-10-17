@@ -15,6 +15,9 @@ use std::time::Duration;
 const MAX_RESPONSE_BYTES: u64 = 1024 * 1024;
 /// HTTP 200 OK. Anything else (including redirects, which we never follow) is an error.
 const HTTP_OK: u16 = 200;
+/// 5xx statuses (RFC 9110 §15.6): the server itself failed, e.g. the AI app
+/// crashed mid-answer. Worth a retry, unlike 4xx (our request was wrong).
+const SERVER_ERROR_STATUSES: std::ops::Range<u16> = 500..600;
 
 pub struct Http {
     agent: ureq::Agent,
@@ -48,6 +51,9 @@ impl Http {
     ) -> Result<Value, AiError> {
         let mut response = response.map_err(map_error)?;
         let status = response.status().as_u16();
+        if SERVER_ERROR_STATUSES.contains(&status) {
+            return Err(AiError::ServerFailed { status });
+        }
         if status != HTTP_OK {
             return Err(AiError::Server(format!("HTTP status {status}")));
         }

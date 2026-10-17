@@ -60,15 +60,16 @@ All numbers live in `profiles/ai-prompts.json`, each with its reason.
   negation."* Retries use the slightly higher temperature so the model doesn't
   repeat the same answer.
 - **Errors.** Connection refused (no server) → `NoLocalServer` at once, no
-  retry. An HTTP error status (for example an unknown model) → `Server` at
-  once. A timeout, an empty answer or an unparsable response counts as a failed
-  attempt and is retried.
+  retry. A 4xx status (for example an unknown model) → `Server` at once. A
+  5xx status (the AI app crashed or failed mid-answer), a timeout, an empty
+  answer or an unparsable response counts as a failed attempt and is retried
+  within the attempt and deadline limits.
 - **Deadline.** 45 s per call across all attempts (past that, typing by hand
   is faster). Each request's timeout is cut to the time left.
 - **Never a silently bad result.** After the last attempt: `Rejected { reasons }`
   with the failed check names (`numbers`, `negations`, `timeout`, `deadline`,
-  ...). For decoys, the closest candidate with `fits = false` if one passed
-  every check except the length.
+  `server_error`, ...). For decoys, the closest candidate with `fits = false`
+  if one passed every check except the length.
 
 ### Cleanup and checks
 
@@ -209,7 +210,8 @@ pub struct AiDecoySuggestion {
 #[derive(uniffi::Error)]
 pub enum AiFfiError {
     NoLocalServer, NotLocal { message: String }, Timeout, BadResponse,
-    Server { message: String }, InvalidRequest { message: String },
+    ServerFailed { status: u16 }, Server { message: String },
+    InvalidRequest { message: String },
     Rejected { reasons: Vec<String> },
 }
 

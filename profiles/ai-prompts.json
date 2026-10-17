@@ -58,7 +58,8 @@
       "prompt_echo": "it repeated these instructions instead of answering",
       "padding": "it had the wrong length ({items}); count carefully",
       "timeout": "it took too long; answer directly and briefly",
-      "bad_response": "it was not a usable answer"
+      "bad_response": "it was not a usable answer",
+      "server_error": "the server failed while answering; answer directly and briefly"
     }
   },
   "languages": {

@@ -37,10 +37,12 @@ pub enum Check {
     Timeout,
     /// The server's answer was empty or not usable (a failed attempt).
     BadResponse,
+    /// The server failed with a 5xx status (a failed attempt).
+    ServerError,
 }
 
 impl Check {
-    pub const ALL: [Check; 15] = [
+    pub const ALL: [Check; 16] = [
         Check::Empty,
         Check::Preamble,
         Check::Markdown,
@@ -56,6 +58,7 @@ impl Check {
         Check::Padding,
         Check::Timeout,
         Check::BadResponse,
+        Check::ServerError,
     ];
 
     pub fn name(self) -> &'static str {
@@ -75,6 +78,7 @@ impl Check {
             Check::Padding => "padding",
             Check::Timeout => "timeout",
             Check::BadResponse => "bad_response",
+            Check::ServerError => "server_error",
         }
     }
 }

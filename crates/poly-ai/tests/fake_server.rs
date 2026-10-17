@@ -27,6 +27,8 @@ enum Reply {
     Delayed(Duration, String),
     /// An HTTP error status.
     Status(u16),
+    /// Wait, then answer with an HTTP error status.
+    DelayedStatus(Duration, u16),
     /// 200 with a body that isn't JSON.
     Garbage,
 }
@@ -118,6 +120,10 @@ fn handle(
                 (200, answer(c))
             }
             Some(Reply::Status(s)) => (s, "{}".into()),
+            Some(Reply::DelayedStatus(d, s)) => {
+                thread::sleep(d);
+                (s, "{}".into())
+            }
             Some(Reply::Garbage) => (200, "not json".into()),
             None => (500, "{}".into()),
         }
@@ -259,13 +265,55 @@ fn unusable_answer_is_retried() {
 }
 
 #[test]
-fn error_status_stops_without_retry() {
+fn client_error_status_stops_without_retry() {
     let fake = FakeServer::start(vec![Reply::Status(404), Reply::Content(GOOD.into())]);
     let err = client()
         .shorten(&fake.server(), MODEL, ORIGINAL)
         .unwrap_err();
     assert!(matches!(err, AiError::Server(_)), "{err:?}");
     assert_eq!(fake.requests().len(), 1);
+}
+
+#[test]
+fn server_failure_is_retried() {
+    let fake = FakeServer::start(vec![Reply::Status(500), Reply::Content(GOOD.into())]);
+    let s = client().shorten(&fake.server(), MODEL, ORIGINAL).unwrap();
+    assert_eq!(s.text, GOOD);
+    assert_eq!(fake.requests().len(), 2);
+}
+
+#[test]
+fn repeated_server_failures_are_rejected_with_reason() {
+    let fake = FakeServer::start(vec![Reply::Status(503); 3]);
+    let err = client()
+        .shorten(&fake.server(), MODEL, ORIGINAL)
+        .unwrap_err();
+    assert_eq!(
+        err,
+        AiError::Rejected {
+            reasons: vec!["server_error".into()]
+        }
+    );
+    assert_eq!(fake.requests().len(), 3);
+}
+
+#[test]
+fn server_failures_stay_within_the_deadline() {
+    // Each 500 takes 300 ms; the 500 ms deadline stops the third attempt.
+    let fake = FakeServer::start(vec![
+        Reply::DelayedStatus(Duration::from_millis(300), 500);
+        3
+    ]);
+    let ai = AiClient::with_timeouts(GENEROUS, GENEROUS, Duration::from_millis(500));
+    let AiError::Rejected { reasons } = ai.shorten(&fake.server(), MODEL, ORIGINAL).unwrap_err()
+    else {
+        panic!("expected Rejected")
+    };
+    assert!(
+        reasons.contains(&DEADLINE_REASON.to_string()),
+        "{reasons:?}"
+    );
+    assert_eq!(fake.requests().len(), 2);
 }
 
 #[test]

@@ -60,7 +60,12 @@ pub enum AiError {
     /// shorten/decoy. Never contains model output.
     #[error("the local AI server sent an unusable answer")]
     BadResponse,
-    /// The server answered with an error status (e.g. unknown model). Not retried.
+    /// The server failed (5xx), e.g. the AI app crashed mid-answer. Retried
+    /// inside shorten/decoy within the attempt and deadline limits.
+    #[error("the local AI server failed (HTTP status {status})")]
+    ServerFailed { status: u16 },
+    /// The server rejected the request (4xx, e.g. unknown model) or answered
+    /// with an unexpected status. Not retried.
     #[error("the local AI server returned an error: {0}")]
     Server(String),
     #[error("invalid request: {0}")]
@@ -177,8 +182,8 @@ impl AiClient {
 
     /// The retry loop shared by shorten and decoy. Each failed attempt's
     /// problems go into the next prompt as feedback, and retries use the
-    /// slightly higher retry temperature. A dead server or an error status
-    /// stops at once; a timeout or unusable answer counts as a failed
+    /// slightly higher retry temperature. A dead server or a 4xx status
+    /// stops at once; a timeout, unusable answer or 5xx counts as a failed
     /// attempt. The overall deadline caps everything.
     fn attempt_loop<T>(
         &self,
@@ -220,6 +225,7 @@ impl AiClient {
                 },
                 Err(AiError::Timeout) => vec![Failure::new(Check::Timeout)],
                 Err(AiError::BadResponse) => vec![Failure::new(Check::BadResponse)],
+                Err(AiError::ServerFailed { .. }) => vec![Failure::new(Check::ServerError)],
                 Err(e) => return Err(e),
             };
             add_reasons(&mut reasons, &failures);
