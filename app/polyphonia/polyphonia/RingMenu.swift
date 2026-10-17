@@ -5,6 +5,7 @@ import SwiftUI
 struct RingMenu<Hub: View>: View {
   let leading: RingAction
   let trailing: RingAction
+  let isOptionsVisible: Bool
   let isPresented: Bool
   let isWorking: Bool
   var releaseRequest: RingReleaseRequest? = nil
@@ -32,6 +33,7 @@ struct RingMenu<Hub: View>: View {
 
       sector(action: leading, side: .left, tint: RingColor.seal)
       sector(action: trailing, side: .right, tint: RingColor.open)
+      sector(action: .options, side: .bottom, tint: RingColor.secondary)
 
       // One stable surface owns hover, clicks, and drags, including the hub and branch corridor.
       Color.clear
@@ -114,9 +116,10 @@ struct RingMenu<Hub: View>: View {
     let highlighted =
       interaction.hoveredAction == action
       || (action == .seal && interaction.isSealExpanded)
+      || (action == .options && isOptionsVisible)
     return RingTile(
       action: action, shape: RingSector(side: side), diameter: RingLayout.diameter,
-      labelOffset: CGSize(width: side.direction * RingLayout.labelRadius, height: 0),
+      labelOffset: side.labelOffset,
       tint: tint, isHighlighted: highlighted, isWorking: isWorking,
       onAction: {
         if action == .seal { interaction.expandSeal() } else { onAction(action) }
@@ -125,8 +128,20 @@ struct RingMenu<Hub: View>: View {
 }
 
 enum RingSide {
-  case left, right
-  var direction: CGFloat { self == .left ? -1 : 1 }
+  case left, right, bottom
+
+  var labelOffset: CGSize {
+    let angle: Double
+    switch self {
+    case .left: angle = 195
+    case .right: angle = -15
+    case .bottom: angle = 90
+    }
+    let radians = angle * .pi / RingAngles.halfTurn
+    return CGSize(
+      width: cos(radians) * RingLayout.labelRadius,
+      height: sin(radians) * RingLayout.labelRadius)
+  }
 }
 
 /// The same resting geometry determines hover and clicks, including the hub and seam gaps.
@@ -134,17 +149,19 @@ struct RingHitRegion: Shape {
   func path(in rect: CGRect) -> Path {
     var path = RingSector(side: .left).path(in: rect)
     path.addPath(RingSector(side: .right).path(in: rect))
+    path.addPath(RingSector(side: .bottom).path(in: rect))
     return path
   }
 
   static func side(at location: CGPoint, in rect: CGRect) -> RingSide? {
+    if RingSector(side: .bottom).path(in: rect).contains(location) { return .bottom }
     if RingSector(side: .left).path(in: rect).contains(location) { return .left }
     if RingSector(side: .right).path(in: rect).contains(location) { return .right }
     return nil
   }
 }
 
-/// An annular half, with small gaps at twelve and six o'clock.
+/// A third of the annulus, with small gaps between the three wheel actions.
 struct RingSector: Shape {
   let side: RingSide
 
@@ -152,11 +169,14 @@ struct RingSector: Shape {
     let center = CGPoint(x: rect.midX, y: rect.midY)
     let outer = min(rect.width, rect.height) / 2
     let inner = outer * RingLayout.innerRadius / RingLayout.outerRadius
-    // A half turn is 180 degrees; starting at 90 puts the seams on the vertical axis.
-    let halfTurn = 180.0
-    let seamAngle = 90.0
-    let start = (side == .left ? seamAngle : -seamAngle) + RingLayout.dividerGap
-    let end = start + halfTurn - RingLayout.dividerGap * 2
+    let range: ClosedRange<Double>
+    switch side {
+    case .left: range = RingAngles.seal
+    case .right: range = RingAngles.open
+    case .bottom: range = RingAngles.options
+    }
+    let start = range.lowerBound + RingLayout.dividerGap
+    let end = range.upperBound - RingLayout.dividerGap
     var path = Path()
     path.addArc(
       center: center, radius: outer, startAngle: .degrees(start), endAngle: .degrees(end),
