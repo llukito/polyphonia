@@ -2,6 +2,7 @@
 
 pub mod damage;
 mod load;
+mod rng;
 mod robust;
 mod stealth;
 

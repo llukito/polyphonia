@@ -17,6 +17,7 @@ use poly_core::envelope::{CRC_SIZE, HEADER_LEN, MAGIC, OFFSET_PAYLOAD_LEN, PAYLO
 use poly_core::{Carrier, CarrierKind, CarrierOptions, PolyError};
 
 use crate::load::{image_err, load_image};
+use crate::rng::SplitMix64;
 
 /// The 8-byte signature every PNG file starts with (PNG spec §5.2).
 const PNG_SIGNATURE: [u8; 8] = *b"\x89PNG\r\n\x1a\n";
@@ -184,32 +185,6 @@ fn default_cover(seed: u64) -> RgbaImage {
         }
         Rgba(px)
     })
-}
-
-/// SplitMix64 (Steele, Lea & Flood, "Fast splittable pseudorandom number
-/// generators", OOPSLA 2014): tiny, seedable, and plenty for cover art.
-/// Not used for anything secret.
-struct SplitMix64(u64);
-
-impl SplitMix64 {
-    /// Increment from the paper: 2^64 / golden ratio, rounded to odd.
-    const GAMMA: u64 = 0x9E37_79B9_7F4A_7C15;
-    /// Output mixing multipliers from the paper (MurmurHash3's fmix64 variant 13).
-    const MIX1: u64 = 0xBF58_476D_1CE4_E5B9;
-    const MIX2: u64 = 0x94D0_49BB_1331_11EB;
-
-    fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(Self::GAMMA);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(Self::MIX1);
-        z = (z ^ (z >> 27)).wrapping_mul(Self::MIX2);
-        z ^ (z >> 31)
-    }
-
-    fn color(&mut self) -> [u8; CHANNELS_USED] {
-        let [r, g, b, ..] = self.next().to_le_bytes();
-        [r, g, b]
-    }
 }
 
 #[cfg(test)]
