@@ -2,11 +2,19 @@
 
 Select text in another app and press **Command + Shift + P**. A glass ring
 opens around the cursor with **Seal** on the left and **Open** on the right.
-Move toward either half and click. The ring uses native glass, spring motion,
-and a quieter animation when macOS Reduce Motion is enabled.
+The ring uses native glass, spring motion, and a quieter animation when macOS
+Reduce Motion is enabled.
 
-- **Seal** creates a file and copies it to the clipboard. Choose the recipient
-  and optional hidden mode in the small controls below the ring.
+- **Seal** expands into a second layer on the left: **Image** above and **Audio**
+  below. Move through Seal into either child. Choose the recipient and optional
+  hidden mode in the small controls below the ring.
+- Press in the hub, drag toward an action, and release to choose it. Continue
+  dragging through Seal to Image or Audio in the same gesture. A release in the
+  hub or a divider gap cancels. Clicking the visible choices also works.
+- If the ring appears while you are still holding **Command + Shift + P**, move
+  toward a choice and release the shortcut to choose it. Some editors need the
+  shortcut released before selection capture can finish; use a mouse drag once
+  the ring appears in those apps.
 - **Open** offers **Paste file** from the clipboard or **Browse**. Enter an
   optional passphrase before choosing a file; files can also be dropped onto
   the ring.
@@ -26,9 +34,38 @@ the source app active until the ring appears. Password fields and apps that bloc
 both selection access and Copy cannot be captured. A failed capture shows the reason
 under the ring instead of silently treating it as an empty selection.
 
-The current working demo uses the Rust **Fake + RawDebug** path and creates a
-`.bin` file. This cipher is not secure. PNG and music choices become available
-when their Rust carrier implementations are ready.
+The current demo uses the Rust **Fake** cipher, which is not secure. Image calls
+the selected **Stealth PNG** or **Robust PNG** carrier and Audio calls **Music WAV**. These carriers are
+currently stubs: selecting either reports that sealing is not available yet and
+leaves your clipboard unchanged. Existing RawDebug `.bin` demo files can still
+be opened. No `.bin` file is presented as an image or an audio file.
+
+## Destination platform and image mode
+
+The glass selector below the ring suggests the app where the text was selected.
+Recognized native messengers are matched by app identity; browser pages are
+matched only when their focused web area's URL is available through Accessibility.
+Otherwise the selector shows **Other**. You can always select a platform manually.
+The destination and mode reset on each invocation and are not saved.
+
+The app bundles the canonical `profiles/platforms.json` from the repository:
+
+- Choosing a platform preselects its recommended **Stealth** or **Robust** mode.
+  Both modes remain available. A profile whose transfer test failed prefers Robust.
+- **Other** starts without a mode. Choose one explicitly; the profile's explanations
+  appear alongside the choices. Audio does not use these image profiles.
+- **Image sending steps** opens the instructions for the current platform and mode,
+  with the profile's test status, notes and sources. After a successful image copy,
+  the same instructions open automatically for the file just created.
+- A received file with `ChecksumMismatch` shows the existing compression error
+  and opens that platform's Stealth steps for resending as a file/document.
+
+The controls sit close to the main ring and move down while the Image/Audio layer
+is open. They scroll when the optional explanations and hidden-mode fields exceed
+the space below the ring, including when the pointer is over a transparent gap.
+App detection does not use browser history, inspect other
+tabs, or request Automation permission. No selected text, keys, passphrases or URLs
+are logged.
 
 ## Build
 

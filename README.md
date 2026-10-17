@@ -93,6 +93,8 @@ crates/poly-music    music carriers (MusicMidi, MusicWav)
 crates/poly-engine   encrypt/decrypt, carrier registry, auto-detect, RawDebug carrier
 crates/poly-ffi      UniFFI wrapper for Swift
 crates/poly-cli      the `poly` binary
+crates/poly-platform-check  `platform-check` binary: messenger send tests (role 5)
+profiles/            platforms.json: per-messenger send mode and steps, read by the app
 app/                 macOS app (Xcode project, role 4)
 scripts/             build-xcframework.sh
 tests/vectors/       golden files
@@ -107,7 +109,7 @@ docs/                SPEC, contributing guide, one guide per role
 | 2 | image | `poly-image`, the `poly damage` subcommand |
 | 3 | music | `poly-music` |
 | 4 | Mac app | `poly-ffi`, `app/`, `scripts/build-xcframework.sh` |
-| 5 | AI + demo | `docs/platform-tests.md`, AI features, demo |
+| 5 | AI + demo | `poly-platform-check`, `profiles/`, `docs/platform-tests.md`, AI features, demo |
 
 `poly-core`, `poly-engine` and `docs/SPEC.md` change only through a PR the lead approves.
 
@@ -120,3 +122,4 @@ docs/                SPEC, contributing guide, one guide per role
   [5 AI + demo](docs/roles/5-ai-demo.md)
 - [CLAUDE.md](CLAUDE.md): rules for AI coding agents
 - [tests/vectors/README.md](tests/vectors/README.md): golden files
+- [docs/platform-tests.md](docs/platform-tests.md): messenger send tests and the platform profiles

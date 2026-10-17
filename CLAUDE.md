@@ -14,11 +14,14 @@ or a WAV/MIDI song. Rust workspace (`crates/`) + Swift macOS app (`app/`) via Un
 | `crates/poly-image`, the `poly damage` subcommand | role 2 |
 | `crates/poly-music` | role 3 |
 | `crates/poly-ffi`, `app/`, `scripts/build-xcframework.sh` | role 4 |
-| `docs/platform-tests.md`, AI features, demo | role 5 |
+| `crates/poly-platform-check`, `profiles/`, `docs/platform-tests.md`, AI features, demo | role 5 |
 
 ## Rules
 - Edit only files you own. Need a change in poly-core, poly-engine or SPEC.md?
   Stop and write the proposed change for the lead instead of making it.
+- Exception: when you finish a stub, you may delete the matching
+  `NotImplemented` assertion in poly-engine's e2e tests in the same PR. Any
+  other poly-engine change still needs the lead's approval.
 - Never change the envelope or payload format silently.
 - Before every commit: `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`
   and `cargo test --workspace` must pass.

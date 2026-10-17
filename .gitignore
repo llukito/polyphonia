@@ -10,3 +10,5 @@ app/**/xcuserdata/
 app/**/DerivedData/
 # Personal Claude Code settings (never committed)
 .claude/settings.local.json
+# Platform test samples and received files (role 5)
+/platform-tests/

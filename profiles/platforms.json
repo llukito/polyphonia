@@ -1,0 +1,398 @@
+{
+  "version": 1,
+  "platforms": [
+    {
+      "id": "telegram",
+      "name": "Telegram",
+      "lossless_file_mode": true,
+      "default_mode": "stealth",
+      "steps": {
+        "stealth": [
+          "Open the chat in the Telegram app on your Mac.",
+          "Drag the Polyphonia image into the chat, or attach it with the paperclip button.",
+          "A window titled \"Send File\" opens. Send it as-is.",
+          "Do not choose \"Send as media\": that is the compressed option.",
+          "The recipient should see a file, not a photo preview."
+        ],
+        "robust": [
+          "Open the chat in the Telegram app on your Mac.",
+          "Drag the Polyphonia image into the chat.",
+          "Choose \"Send as media\" (the compressed photo option) and send."
+        ]
+      },
+      "notes": "Verified by a real send test (2026-10-17, Telegram desktop): sent as a file, the PNG arrived byte-for-byte identical. Sent as a photo, the PNG was converted to JPEG (-75% size) but kept 512x512 (no resize), so hidden stealth data is lost. Files up to 2 GB each (4 GB with Premium).",
+      "sources": [
+        "https://telegram.org/faq",
+        "https://www.online-tech-tips.com/?p=82159"
+      ],
+      "verified": { "status": "verified", "date": "2026-10-17" }
+    },
+    {
+      "id": "whatsapp",
+      "name": "WhatsApp",
+      "lossless_file_mode": true,
+      "default_mode": "stealth",
+      "steps": {
+        "stealth": [
+          "Open the chat in WhatsApp on your Mac.",
+          "Click the attach button and choose Document.",
+          "Select the Polyphonia image and send it.",
+          "Do not use the photos option: it compresses the image, even in HD."
+        ],
+        "robust": [
+          "Open the chat in WhatsApp on your Mac.",
+          "Click the attach button and choose the photos option.",
+          "Select the Polyphonia image and send it as a normal photo."
+        ]
+      },
+      "notes": "Strong evidence, not tested. WhatsApp's official help pages block automated tools. Evidence: WhatsApp's own update changelog (v23.24.73, quoted by Tom's Guide) says original-quality media can be sent as a file via + > Document > Choose photo or video; reports since 2023 consistently say Document keeps the original, up to 2 GB, while normal and HD photos are compressed. Official limits recorded earlier: 2 GB from WhatsApp Desktop/Web, 100 MB from Android.",
+      "sources": [
+        "https://www.tomsguide.com/news/whatsapp-update-marks-a-big-change-for-iphone-users-heres-what-to-expect",
+        "https://lowyat.net/2023/312184/whatsapp-uncompressed-original-quality",
+        "https://m.gsmarena.com/whatsapp_for_ios_adds_option_to_send_uncompressed_images_and_videos-news-60812.php",
+        "https://faq.whatsapp.com/453914586839706/?cms_platform=windows-desktop",
+        "https://faq.whatsapp.com/164676891531296/?locale=en_US"
+      ],
+      "verified": { "status": "research", "date": null }
+    },
+    {
+      "id": "signal",
+      "name": "Signal",
+      "lossless_file_mode": false,
+      "default_mode": "robust",
+      "steps": {
+        "stealth": [
+          "Not confirmed to keep the file unchanged. If you try it anyway:",
+          "Open the chat in Signal Desktop on your Mac.",
+          "Attach the Polyphonia image using the option to send it as a file or document, not as a photo.",
+          "Send. The recipient should see a file attachment, not a photo preview."
+        ],
+        "robust": [
+          "Open the chat in Signal Desktop on your Mac.",
+          "Drag the Polyphonia image into the chat.",
+          "Send it as a normal photo."
+        ]
+      },
+      "notes": "Unconfirmed: no official statement found (the official help pages could not be read). Third-party sources say files and documents skip compression, up to 100 MB, and that normal photos are recompressed and shrunk (reported as about 1200x1600). How Signal Desktop decides between photo and file is unknown. Candidate for our own send test.",
+      "sources": [
+        "https://support.signal.org/hc/en-us/articles/360007060212-Send-a-message",
+        "https://www.xatakamovil.com/aplicaciones/whatsapp-telegram-line-signal-facebook-imessage-este-su-limite-tamano-para-envio-archivos",
+        "https://mjtsai.com/blog/2021/04/27/beware-of-signal-recompressing-images-and-videos"
+      ],
+      "verified": { "status": "research", "date": null }
+    },
+    {
+      "id": "discord",
+      "name": "Discord",
+      "lossless_file_mode": false,
+      "default_mode": "robust",
+      "steps": {
+        "stealth": [
+          "Not confirmed to keep the file unchanged. If you try it anyway:",
+          "Open the channel or DM in the Discord app on your Mac (not the mobile app).",
+          "Drag the Polyphonia image into the message box, or attach it with the upload button.",
+          "Send it."
+        ],
+        "robust": [
+          "Open the channel or DM in the Discord app.",
+          "Attach the Polyphonia image and send it."
+        ]
+      },
+      "notes": "Unconfirmed: the official File Attachments FAQ gives the upload limits (free 20 MB since August 2026, Nitro Basic 50 MB, Nitro 1 GB) and mentions compression and a mobile data-saver mode that lowers image quality, but never says originals are preserved. Desktop uploads are reported (unofficially) to be kept as-is. Candidate for our own send test.",
+      "sources": [
+        "https://support.discord.com/hc/da/articles/25444343291031",
+        "https://gaminghq.eu/2026/08/14/discord-free-file-upload-limit-increased/"
+      ],
+      "verified": { "status": "research", "date": null }
+    },
+    {
+      "id": "instagram",
+      "name": "Instagram",
+      "lossless_file_mode": false,
+      "default_mode": "robust",
+      "steps": {
+        "stealth": [
+          "Not available: Instagram direct messages have no file or document attachment, so a stealth image always gets compressed."
+        ],
+        "robust": [
+          "Open the conversation in Instagram direct messages.",
+          "Attach the Polyphonia image from your files or photo library (don't take a new photo in the app).",
+          "If an HD option is offered, turn it on, then send."
+        ]
+      },
+      "notes": "The consumer app (iOS, Android, web) has no file/document attachment; file attachments have been tested since March 2024 but not shipped. Only Meta's business messaging API can send files (PDF only, up to 25 MB). Photos are heavily compressed; the HD option is still compressed, just less. No official source found.",
+      "sources": [
+        "https://www.igeeksblog.com/how-to-send-hd-photos-on-instagram/",
+        "https://beebom.com/instagram-send-hd-photos-messages-rolling-out/amp/",
+        "https://www.socialmediatoday.com/news/instagram-is-experimenting-with-an-option-to-add-files-to-your-dms/710108/"
+      ],
+      "verified": { "status": "research", "date": null }
+    },
+    {
+      "id": "email",
+      "name": "Email",
+      "lossless_file_mode": false,
+      "default_mode": "robust",
+      "steps": {
+        "stealth": [
+          "Not confirmed to keep the file unchanged. If you try it anyway:",
+          "Create a new email in your mail app.",
+          "Attach the Polyphonia image as a file attachment.",
+          "In Apple Mail, check that the image size option in the message header is set to Actual Size, not a smaller size.",
+          "Send."
+        ],
+        "robust": [
+          "Create a new email in your mail app.",
+          "Attach the Polyphonia image and send it."
+        ]
+      },
+      "notes": "Unconfirmed: Apple's Mail guide says Mail inserts images at their actual size by default and offers smaller sizes in a pop-up menu, but no official source says attachments are always delivered byte-for-byte. Large attachments may go through Mail Drop (up to 5 GB, stored in iCloud for 30 days). Other mail apps and providers were not checked. Strong candidate for our own send test.",
+      "sources": [
+        "https://support.apple.com/guide/mail/send-attachments-mlhlp1050/mac"
+      ],
+      "verified": { "status": "research", "date": null }
+    },
+    {
+      "id": "messenger",
+      "name": "Facebook Messenger",
+      "lossless_file_mode": false,
+      "default_mode": "robust",
+      "steps": {
+        "stealth": [
+          "Not confirmed to keep the file unchanged. If you try it anyway:",
+          "Open the chat on messenger.com or facebook.com in your browser (there is no Mac app any more).",
+          "Attach the Polyphonia image as a file with the attach button, not as a photo.",
+          "Send."
+        ],
+        "robust": [
+          "Open the chat on messenger.com or facebook.com in your browser.",
+          "Add the Polyphonia image as a photo.",
+          "If an HD option is offered, turn it on, then send."
+        ]
+      },
+      "notes": "Unconfirmed: Meta's announcement says files up to 100 MB can be sent (Word, PDF, Excel and other major formats) and that HD photos (up to 4096x4096) are available with an HD toggle, but it doesn't say files keep the original. The Messenger desktop app for Mac was discontinued on December 15, 2025; use messenger.com or facebook.com.",
+      "sources": [
+        "https://about.fb.com/news/2024/04/hd-photos-shared-albums-and-more-on-messenger/",
+        "https://techcrunch.com/2025/12/15/facebook-messengers-desktop-app-is-no-more/"
+      ],
+      "verified": { "status": "research", "date": null }
+    },
+    {
+      "id": "imessage",
+      "name": "iMessage",
+      "lossless_file_mode": false,
+      "default_mode": "robust",
+      "steps": {
+        "stealth": [
+          "Not confirmed to keep the file unchanged. If you try it anyway:",
+          "Open the conversation in the Messages app on your Mac.",
+          "Drag the Polyphonia image file from Finder into the message field.",
+          "Send."
+        ],
+        "robust": [
+          "Open the conversation in the Messages app on your Mac.",
+          "Drag the Polyphonia image into the message field, or add it from Photos with the Apps button.",
+          "Send."
+        ]
+      },
+      "notes": "Unconfirmed: Apple's Messages guide explains how to send photos and files but says nothing about quality, compression or size limits. Unofficial sources report up to 100 MB per file over iMessage. iPhone and iPad have a Low Quality Image Mode that shrinks photos; Mac has no such setting. Messages sent as SMS/MMS (green bubbles) are compressed.",
+      "sources": [
+        "https://support.apple.com/guide/messages/send-images-ichtb967d30b/mac",
+        "https://www.takecontrolbooks.com/resources/0170/site/chap12.html"
+      ],
+      "verified": { "status": "research", "date": null }
+    },
+    {
+      "id": "viber",
+      "name": "Viber",
+      "lossless_file_mode": true,
+      "default_mode": "stealth",
+      "steps": {
+        "stealth": [
+          "Open the chat in Viber for Desktop on your Mac.",
+          "Drag the Polyphonia image into the conversation.",
+          "Choose to send it at its original, uncompressed size, not the usual compressed size.",
+          "Send."
+        ],
+        "robust": [
+          "Open the chat in Viber for Desktop on your Mac.",
+          "Drag the Polyphonia image into the conversation.",
+          "Send it at the usual (compressed) size."
+        ]
+      },
+      "notes": "Official Viber blog (2017): Viber for Desktop sends almost any file up to 200 MB, and photos can be sent at their \"original uncompressed size\" (up to 200 MB) or the usual compressed size. The source is from 2017, so the option may have changed; check it in a real send test.",
+      "sources": [
+        "https://www.viber.com/blog/2017-09-14/hacks-for-viber-desktop/"
+      ],
+      "verified": { "status": "research", "date": null }
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "lossless_file_mode": false,
+      "default_mode": "robust",
+      "steps": {
+        "stealth": [
+          "Not confirmed to keep the file unchanged. If you try it anyway:",
+          "Open the channel or DM in the Slack app on your Mac.",
+          "Click the plus button next to the message field and upload the Polyphonia image, or drag it in.",
+          "Send."
+        ],
+        "robust": [
+          "Open the channel or DM in the Slack app on your Mac.",
+          "Upload the Polyphonia image and send it."
+        ]
+      },
+      "notes": "Unconfirmed: the official help center says files up to 1 GB can be added and image previews show inline when the image is under 25,000 pixels on the longest side and under 45 million pixels total, but it doesn't say whether uploaded files are kept unchanged.",
+      "sources": [
+        "https://slack.com/help/articles/201330736-Add-files-to-Slack"
+      ],
+      "verified": { "status": "research", "date": null }
+    },
+    {
+      "id": "teams",
+      "name": "Microsoft Teams",
+      "lossless_file_mode": false,
+      "default_mode": "robust",
+      "steps": {
+        "stealth": [
+          "Not confirmed to keep the file unchanged. If you try it anyway:",
+          "Open the chat in Microsoft Teams on your Mac.",
+          "In the compose box, select Actions and apps > Attach file, and pick the Polyphonia image.",
+          "Send."
+        ],
+        "robust": [
+          "Open the chat in Microsoft Teams on your Mac.",
+          "Add the Polyphonia image to the message and send it."
+        ]
+      },
+      "notes": "Unconfirmed: the official guide says files attached in a chat are uploaded to the sender's OneDrive (Microsoft Teams Chat Files folder; channels use SharePoint), up to 10 files per message. OneDrive allows files up to 250 GB; Teams Free has 5 GB of storage for documents, while images and videos don't count. No official statement on whether images are kept unchanged.",
+      "sources": [
+        "https://support.microsoft.com/office/0c4d34ee-5dd8-46d5-ab35-0d227b5e6eb5",
+        "https://support.microsoft.com/en-US/teams/free/troubleshoot/where-is-my-microsoft-teams-free-data-stored"
+      ],
+      "verified": { "status": "research", "date": null }
+    },
+    {
+      "id": "google-chat",
+      "name": "Google Chat",
+      "lossless_file_mode": false,
+      "default_mode": "robust",
+      "steps": {
+        "stealth": [
+          "Not confirmed to keep the file unchanged. If you try it anyway:",
+          "Open the conversation in Google Chat in your browser.",
+          "Click Upload file, or drag the Polyphonia image into the compose bar.",
+          "Send."
+        ],
+        "robust": [
+          "Open the conversation in Google Chat in your browser.",
+          "Click Upload file and pick the Polyphonia image, then send."
+        ]
+      },
+      "notes": "Unconfirmed: the official help center says files up to 200 MB can be attached from a computer, mobile device or Google Drive; up to 20 images or videos at a time, or one attachment of other file types. Some file types are blocked. Nothing official on whether images are kept unchanged.",
+      "sources": [
+        "https://support.google.com/chat/answer/7651457"
+      ],
+      "verified": { "status": "research", "date": null }
+    },
+    {
+      "id": "x",
+      "name": "X (Twitter) DMs",
+      "lossless_file_mode": false,
+      "default_mode": "robust",
+      "steps": {
+        "stealth": [
+          "Not confirmed: no official source says X keeps files unchanged, so use robust."
+        ],
+        "robust": [
+          "Open the conversation in X direct messages (Chat) in your browser.",
+          "Attach the Polyphonia image as a photo and send it."
+        ]
+      },
+      "notes": "Unconfirmed: X developer docs describe encrypted media in X Chat but don't say files stay unchanged. The public API allows one photo, video or GIF per message (images up to 5 MB). The help center could not be read.",
+      "sources": [
+        "https://docs.x.com/xchat/media.md",
+        "https://developer.x.com/en/docs/direct-messages/message-attachments/overview"
+      ],
+      "verified": { "status": "research", "date": null }
+    },
+    {
+      "id": "linkedin",
+      "name": "LinkedIn",
+      "lossless_file_mode": false,
+      "default_mode": "robust",
+      "steps": {
+        "stealth": [
+          "Not confirmed to keep the file unchanged. If you try it anyway:",
+          "Open the conversation in LinkedIn messaging in your browser (the mobile app can't send attachments).",
+          "Attach the Polyphonia image with the attach-a-file button, not the image button.",
+          "Send."
+        ],
+        "robust": [
+          "Open the conversation in LinkedIn messaging in your browser.",
+          "Attach the Polyphonia image and send it."
+        ]
+      },
+      "notes": "Unconfirmed: no official source found. Unofficial sources list documents and images (GIF, JPEG, PNG, BMP) as allowed attachments, up to five files per message, and conflict on the size limit (2 MB combined vs 20 MB). Unofficial sources say attachments can't be sent from the mobile app.",
+      "sources": [
+        "https://www.bardeen.ai/answers/how-to-attach-a-file-in-linkedin-message",
+        "https://digitalworks.dk/en/artikler/attaching-files-to-linkedin-messages"
+      ],
+      "verified": { "status": "research", "date": null }
+    },
+    {
+      "id": "snapchat",
+      "name": "Snapchat",
+      "lossless_file_mode": false,
+      "default_mode": "robust",
+      "steps": {
+        "stealth": [
+          "Not available: Snapchat has no confirmed way to send an arbitrary file unchanged, so use robust."
+        ],
+        "robust": [
+          "Open the chat in Snapchat for Web (web.snapchat.com) or the phone app.",
+          "Send the Polyphonia image as a photo (on the phone, from Memories > Camera Roll).",
+          "Make sure the recipient saves it before it disappears."
+        ]
+      },
+      "notes": "Unconfirmed: no official source found. Unofficial sources say Snapchat for Web can send image files (PNG, JPG, GIF) and video, and that chats can send photos from the camera roll. Messages and snaps may disappear after viewing or 24 hours, so the recipient must save the image.",
+      "sources": [
+        "https://techcrunch.com/2022/09/15/snapchat-for-web-is-now-available-to-all-users-worldwide",
+        "https://maketecheasier.com/send-live-snaps-photos-videos-from-camera-roll-snapchat"
+      ],
+      "verified": { "status": "research", "date": null }
+    },
+    {
+      "id": "wechat",
+      "name": "WeChat",
+      "lossless_file_mode": false,
+      "default_mode": "robust",
+      "steps": {
+        "stealth": [
+          "Not confirmed to keep the file unchanged. If you try it anyway:",
+          "Open the chat in WeChat for Mac.",
+          "Send the Polyphonia image as a file (drag it in or use the file button), not as a picture.",
+          "Send."
+        ],
+        "robust": [
+          "Open the chat in WeChat for Mac.",
+          "Send the Polyphonia image as a picture."
+        ]
+      },
+      "notes": "Unconfirmed: the official help page could not be read. Unofficial sources conflict: a 25 MB file limit is reported, and the Full Image/original option may still be compressed above about 10-20 MB. Pasted images over 300 KiB show as a blurred preview until the recipient taps to load them.",
+      "sources": [
+        "https://cs.help.wechat.com/hc/en-us/articles/11915274526479-Share-Your-Photos-and-Videos-in-Chats",
+        "https://ssb22.user.srcf.net/s60/welimits.html"
+      ],
+      "verified": { "status": "research", "date": null }
+    }
+  ],
+  "other": {
+    "default_mode": null,
+    "explain": {
+      "stealth": "Looks like a normal image. Holds the most, but it only arrives intact if you send it as a file or document, not as a photo.",
+      "robust": "Survives compression, so send it as a normal photo. It looks like abstract art and holds less."
+    }
+  }
+}
