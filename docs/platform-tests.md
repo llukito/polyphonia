@@ -26,30 +26,33 @@ the envelope's CRC-32 catches the damage on receive and the app says
 Every entry starts as `"verified": { "status": "research" }`. It becomes
 `"verified"` (with the date) or `"failed"` only after a real send test below.
 
-## What research says (unverified)
+## What research says
 
-| Platform | Lossless file mode | Default | Summary |
-|---|---|---|---|
-| Telegram | yes | stealth | Sending as a file / "without compression" keeps the original (up to 2 GB); normal photos are compressed. |
-| WhatsApp | yes | stealth | Attach → Document keeps the original (2 GB from Desktop/Web, 100 MB on Android per the help center); normal and HD photos are compressed. |
-| Signal | yes | stealth | Files/documents skip compression (up to 100 MB); normal photos are recompressed and shrunk (reported ~1200×1600, not officially confirmed). |
-| Discord | yes | stealth | Desktop uploads are generally kept; free limit 20 MB since August 2026; mobile may compress images. |
-| Instagram | no | robust | DMs have no file/document attachment; photos are heavily compressed (HD is still compressed). |
-| Email | yes | stealth | Attachments arrive unchanged; check the mail app isn't shrinking images (Apple Mail: Actual Size). |
-| Other | n/a | user picks | |
+Rule: `lossless_file_mode` is true only when the platform's own help center or
+docs clearly say files are sent unchanged, or a real send test below proved it.
+Otherwise it is false (robust) and marked "unconfirmed". Re-checked 2026-10-17.
 
-Sources:
+| Platform | Lossless file mode | Default | Confidence | Summary |
+|---|---|---|---|---|
+| Telegram | yes | stealth | verified by test | Sent as a file ("Send File" dialog, as-is) the PNG arrived identical; "Send as media" converted it to JPEG (-75%), same 512×512. Files up to 2 GB (4 GB Premium). |
+| WhatsApp | no | robust | unconfirmed | Blogs say Document keeps the original (2 GB); official pages unreadable. Normal and HD photos are compressed. Test candidate. |
+| Signal | no | robust | unconfirmed | Third parties say files skip compression (100 MB); no official statement. Test candidate. |
+| Discord | no | robust | unconfirmed | Official FAQ: 20 MB free (since Aug 2026), 50 MB Nitro Basic, 1 GB Nitro; mentions compression, never says originals are kept. Test candidate. |
+| Instagram | no | robust | unconfirmed | No file/document attachment in DMs; photos compressed (HD too). |
+| Email | no | robust | unconfirmed | Apple Mail inserts images at Actual Size by default, but nothing official says attachments are byte-for-byte. Test candidate. |
+| Facebook Messenger | no | robust | unconfirmed | Meta: files up to 100 MB, HD photos up to 4096×4096; no word on originals. Mac app discontinued Dec 2025, use the web. |
+| iMessage | no | robust | unconfirmed | Apple's guide is silent on quality; ~100 MB reported unofficially; SMS/MMS compresses. |
+| Viber | yes | stealth | official (2017) | Official blog: Desktop sends files up to 200 MB and photos at "original uncompressed size". Old source. |
+| Slack | no | robust | unconfirmed | Official: files up to 1 GB; nothing on whether files are kept unchanged. |
+| Microsoft Teams | no | robust | unconfirmed | Official: chat files go to the sender's OneDrive, 10 files per message; nothing on unchanged images. |
+| Google Chat | no | robust | unconfirmed | Official: files up to 200 MB; nothing on unchanged images. |
+| X (Twitter) DMs | no | robust | unconfirmed | Developer docs: one photo/video/GIF per message (images 5 MB); nothing on unchanged files. |
+| LinkedIn | no | robust | unconfirmed | No official source; unofficial limits conflict (2 MB vs 20 MB). |
+| Snapchat | no | robust | unconfirmed | No official source; photos only, messages may disappear. |
+| WeChat | no | robust | unconfirmed | Official page unreadable; unofficial 25 MB file limit, "Full Image" may still compress. |
+| Other | n/a | user picks | | |
 
-- Telegram: <https://telegram.org/faq>, <https://www.online-tech-tips.com/?p=82159>
-- WhatsApp: <https://faq.whatsapp.com/453914586839706/?cms_platform=windows-desktop>, <https://faq.whatsapp.com/164676891531296/?locale=en_US>
-- Signal: <https://support.signal.org/hc/en-us/articles/360007060212-Send-a-message>,
-  <https://www.xatakamovil.com/aplicaciones/whatsapp-telegram-line-signal-facebook-imessage-este-su-limite-tamano-para-envio-archivos>,
-  <https://mjtsai.com/blog/2021/04/27/beware-of-signal-recompressing-images-and-videos>
-- Discord: <https://support.discord.com/hc/en-us/articles/25444343291031-File-Attachments-FAQ>,
-  <https://gaminghq.eu/2026/08/14/discord-free-file-upload-limit-increased/>
-- Instagram: <https://www.igeeksblog.com/how-to-send-hd-photos-on-instagram/>,
-  <https://beebom.com/instagram-send-hd-photos-messages-rolling-out/amp/>
-- Email (Apple Mail image size): <https://support.apple.com/guide/mail/send-attachments-mlhlp1050/mac>
+Sources for each platform are in the `sources` field of `profiles/platforms.json`.
 
 ## Running a test
 
@@ -131,10 +134,19 @@ the rules.
 
 ## Results
 
+Raw output of `compare` (Telegram, 2026-10-17):
+
+| Platform | Method | File | Sample | Result | Size | Still PNG | Dimensions |
+|---|---|---|---|---|---|---|---|
+| telegram | file | sample.png | sample.png | identical | 787072 B (same) | yes | 512×512 |
+| telegram | photo | photo_5375304884556604412_x.jpg | sample.png | **changed** | 787072 → 193948 B (-75.4%) | no (JPEG) | 512×512 |
+
+Summary:
+
 | Platform | Method | Date | OS / app version | PNG | WAV | MID | Notes |
 |---|---|---|---|---|---|---|---|
-| Telegram | file | | | | | | |
-| Telegram | photo | | | | | | |
+| Telegram | file | 2026-10-17 | Telegram desktop (version not recorded) | identical (787072 B, PNG, 512×512) | | | "Send File" dialog, sent as-is |
+| Telegram | photo | 2026-10-17 | Telegram desktop (version not recorded) | **changed**: JPEG, 787072 → 193948 B (-75.4%), still 512×512 | | | "Send as media" |
 | WhatsApp | file | | | | | | |
 | WhatsApp | photo | | | | | | |
 | Signal | file | | | | | | |
