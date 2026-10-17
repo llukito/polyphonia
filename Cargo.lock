@@ -1516,6 +1516,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "poly-platform-check"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "hex",
+ "hound",
+ "image",
+ "midly",
+ "rand 0.10.3",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "polyval"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

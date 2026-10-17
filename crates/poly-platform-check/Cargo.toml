@@ -1,0 +1,23 @@
+[package]
+name = "poly-platform-check"
+description = "Prepare sample files and check what messengers do to them (role 5)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "platform-check"
+path = "src/main.rs"
+
+[dependencies]
+image.workspace = true
+hound.workspace = true
+midly.workspace = true
+sha2.workspace = true
+rand.workspace = true
+hex.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
