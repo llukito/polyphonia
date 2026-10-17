@@ -1,0 +1,25 @@
+[package]
+name = "poly-ffi"
+description = "UniFFI wrapper over poly-engine for the Swift macOS app (role 4)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "poly_ffi"
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[features]
+# Builds the uniffi-bindgen binary used by scripts/build-xcframework.sh.
+bindgen = ["uniffi/cli"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[dependencies]
+poly-core.workspace = true
+poly-engine.workspace = true
+uniffi.workspace = true

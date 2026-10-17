@@ -1,0 +1,14 @@
+[package]
+name = "poly-image"
+description = "Polyphonia image carriers (role 2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+poly-core.workspace = true
+image.workspace = true
+
+[dev-dependencies]
+poly-core = { workspace = true, features = ["test-utils"] }

@@ -1,0 +1,10 @@
+/target
+/build
+*.pub
+*.key
+!tests/vectors/*.pub
+!tests/vectors/*.key
+.DS_Store
+# Xcode
+app/**/xcuserdata/
+app/**/DerivedData/

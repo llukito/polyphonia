@@ -1,0 +1,18 @@
+[package]
+name = "poly-cli"
+description = "Polyphonia command-line tool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "poly"
+path = "src/main.rs"
+
+[dependencies]
+poly-core.workspace = true
+poly-engine.workspace = true
+clap.workspace = true
+hex.workspace = true
+anyhow.workspace = true

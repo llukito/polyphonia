@@ -1,0 +1,47 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+# Internal crates
+poly-core = { path = "crates/poly-core" }
+poly-crypto = { path = "crates/poly-crypto" }
+poly-image = { path = "crates/poly-image" }
+poly-music = { path = "crates/poly-music" }
+poly-engine = { path = "crates/poly-engine" }
+
+# Core
+thiserror = "2.0.21"
+crc32fast = "1.5.2"
+sha2 = "0.11.1"
+rand = "0.10.3"
+
+# Crypto (role 1)
+ml-kem = "0.3.2"
+rsa = "0.9.10"
+aes-gcm = "0.11.1"
+hkdf = "0.13.0"
+argon2 = "0.6.0"
+
+# Image (role 2)
+image = "0.25.10"
+
+# Music (role 3)
+hound = "3.5.1"
+midly = "0.5.3"
+rustfft = "6.4.1"
+
+# CLI / FFI
+clap = { version = "4.6.7", features = ["derive"] }
+hex = "0.4.3"
+anyhow = "1.0.104"
+uniffi = "0.32.2"
+
+# Testing
+proptest = "1.12.0"

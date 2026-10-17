@@ -1,0 +1,20 @@
+[package]
+name = "poly-core"
+description = "Polyphonia shared types, traits, errors, envelope and payload formats"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Shared test helpers (assert_carrier_roundtrip, assert_cipher_roundtrip).
+test-utils = ["dep:rand"]
+
+[dependencies]
+thiserror.workspace = true
+crc32fast.workspace = true
+sha2.workspace = true
+rand = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest.workspace = true
