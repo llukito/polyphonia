@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 poly-core.workspace = true
 poly-engine.workspace = true
+poly-image.workspace = true
 clap.workspace = true
 hex.workspace = true
 anyhow.workspace = true

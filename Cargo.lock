@@ -1458,6 +1458,7 @@ dependencies = [
  "hex",
  "poly-core",
  "poly-engine",
+ "poly-image",
 ]
 
 [[package]]
@@ -1511,6 +1512,7 @@ version = "0.1.0"
 dependencies = [
  "image",
  "poly-core",
+ "reed-solomon",
 ]
 
 [[package]]
@@ -1521,6 +1523,22 @@ dependencies = [
  "midly",
  "poly-core",
  "rustfft",
+]
+
+[[package]]
+name = "poly-platform-check"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "hex",
+ "hound",
+ "image",
+ "midly",
+ "rand 0.10.3",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -1849,6 +1867,12 @@ name = "reborrow"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03251193000f4bd3b042892be858ee50e8b3719f2b08e5833ac4353724632430"
+
+[[package]]
+name = "reed-solomon"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13de68c877a77f35885442ac72c8beb7c2f0b09380c43b734b9d63d1db69ee54"
 
 [[package]]
 name = "regex-syntax"

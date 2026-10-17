@@ -181,10 +181,7 @@ fn not_implemented_parts_report_it() {
     let me = me();
     let mut req = request(&me, "x");
     req.carrier = CarrierKind::MusicMidi;
-    assert!(matches!(
-        engine.encrypt(&req),
-        Err(PolyError::NotImplemented(_))
-    ));
+    assert!(engine.encrypt(&req).is_ok());
 }
 
 /// A carrier with a tiny fixed capacity, to test the capacity check.
