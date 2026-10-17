@@ -44,6 +44,7 @@ FFI_MODULE="${MODULE}FFI"   # matches crates/poly-ffi/uniffi.toml
 TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
 BUILD="$ROOT/build"
 XCFRAMEWORK="$BUILD/$MODULE.xcframework"
+PROFILE_MARKER="$BUILD/.poly-ffi-profile"
 
 echo "==> Installing Rust targets (no-op if present)"
 rustup target add "${TARGETS[@]}" >/dev/null
@@ -52,6 +53,27 @@ for target in "${TARGETS[@]}"; do
   echo "==> Building $CRATE for $target ($PROFILE)"
   cargo build -p "$CRATE" $CARGO_PROFILE_FLAG --target "$target"
 done
+
+# Cargo has checked every Rust dependency. Repackage only when its archives or
+# the binding configuration changed; Xcode can invoke this on every build.
+if [[ -f "$PROFILE_MARKER" && "$(cat "$PROFILE_MARKER")" == "$PROFILE" \
+  && -f "$XCFRAMEWORK/Info.plist" && -f "$BUILD/swift/$MODULE.swift" \
+  && -f "$BUILD/headers/module.modulemap" && -f "$BUILD/headers/$FFI_MODULE.h" \
+  && -f "$BUILD/universal/$LIB.a" \
+  && ! "$ROOT/scripts/build-xcframework.sh" -nt "$PROFILE_MARKER" \
+  && ! "$ROOT/crates/poly-ffi/uniffi.toml" -nt "$PROFILE_MARKER" ]]; then
+  needs_packaging=false
+  for target in "${TARGETS[@]}"; do
+    if [[ "target/$target/$PROFILE/$LIB.a" -nt "$PROFILE_MARKER" \
+      || "target/$target/$PROFILE/$LIB.dylib" -nt "$PROFILE_MARKER" ]]; then
+      needs_packaging=true
+    fi
+  done
+  if [[ "$needs_packaging" == false ]]; then
+    echo "==> Rust bridge is up to date"
+    exit 0
+  fi
+fi
 
 rm -rf "$BUILD/universal" "$BUILD/swift" "$BUILD/headers" "$XCFRAMEWORK"
 mkdir -p "$BUILD/universal" "$BUILD/swift" "$BUILD/headers"
@@ -76,6 +98,8 @@ xcodebuild -create-xcframework \
   -library "$BUILD/universal/$LIB.a" \
   -headers "$BUILD/headers" \
   -output "$XCFRAMEWORK"
+
+printf '%s\n' "$PROFILE" > "$PROFILE_MARKER"
 
 echo "==> Done"
 echo "    $XCFRAMEWORK"

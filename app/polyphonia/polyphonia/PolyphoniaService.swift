@@ -7,8 +7,26 @@ struct DemoIdentity: Sendable {
 }
 
 struct SealedCarrier: Sendable {
-  let bytes: Data
-  let fileExtension: String
+  let fileURL: URL
+  let summary: String
+}
+
+struct OpenedMessage: Sendable {
+  let text: String
+  let summary: String
+}
+
+private func carrierSummary(_ carrier: CarrierKind, byteCount: Int) -> String {
+  let name: String
+  switch carrier {
+  case .stealthPng: name = "Stealth PNG"
+  case .robustPng: name = "Robust PNG"
+  case .musicWav: name = "Music WAV"
+  case .musicMidi: name = "Music MIDI"
+  case .rawDebug: name = "Raw debug"
+  }
+  let size = ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file)
+  return "\(name) · \(size)"
 }
 
 /// Small boundary between SwiftUI and the generated Rust API.
@@ -26,7 +44,7 @@ final class PolyphoniaService: @unchecked Sendable {
 
   func seal(
     message: String, recipientPublicKey: Data, decoy: String?, passphrase: String?,
-    carrier: CarrierKind
+    carrier: CarrierKind, coverImage: Data? = nil
   ) throws
     -> SealedCarrier
   {
@@ -36,14 +54,20 @@ final class PolyphoniaService: @unchecked Sendable {
         decoy: decoy,
         passphrase: passphrase,
         recipientPublicKey: recipientPublicKey,
+        // Keep the existing demo identity until real encryption and contact migration are ready.
         algorithm: .fake,
         carrier: carrier,
-        options: CarrierOptions()
+        options: CarrierOptions(coverImage: carrier == .stealthPng ? coverImage : nil)
       ))
-    return SealedCarrier(bytes: result.bytes, fileExtension: result.`extension`)
+    let fileURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("Polyphonia-\(UUID().uuidString)")
+      .appendingPathExtension(result.`extension`)
+    try result.bytes.write(to: fileURL, options: .atomic)
+    return SealedCarrier(
+      fileURL: fileURL, summary: carrierSummary(result.carrier, byteCount: result.bytes.count))
   }
 
-  func open(file: Data, passphrase: String?) throws -> String {
+  func open(file: Data, passphrase: String?) throws -> OpenedMessage {
     let identity = try demoIdentity()
     let result = try decrypt(
       request: DecryptRequest(
@@ -53,7 +77,8 @@ final class PolyphoniaService: @unchecked Sendable {
         passphrase: passphrase
       ))
     // Slot is intentionally not returned to the interface.
-    return result.text
+    return OpenedMessage(
+      text: result.text, summary: carrierSummary(result.carrier, byteCount: file.count))
   }
 }
 

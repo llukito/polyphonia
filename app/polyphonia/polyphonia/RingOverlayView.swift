@@ -7,6 +7,7 @@ struct RingOverlayView: View {
   let onQuit: () -> Void
   let onBrowse: () -> Void
   let onImportContact: () -> Void
+  let onChooseCover: () -> Void
 
   @State private var accessoryContentHeight = RingLayout.fieldHeight
   @State private var isSealExpanded = false
@@ -73,7 +74,8 @@ struct RingOverlayView: View {
 
   private func perform(_ action: RingAction) {
     switch action {
-    case .seal: break  // The radial control expands Seal locally; only its children perform encryption.
+    // Seal expands the ring; its children perform encryption.
+    case .seal: break
     case .sealImage: session.sealAndCopy(as: .image)
     case .sealAudio: session.sealAndCopy(as: .audio)
     case .open:
@@ -192,6 +194,10 @@ struct RingOverlayView: View {
         .background { accessoryGlass }
 
         PlatformControls(selection: session.platformSelection)
+        ImageCoverControls(
+          selection: session.platformSelection, coverName: session.imageCover?.name,
+          onChoose: onChooseCover, onRemove: session.removeImageCover)
+        AudioFormatPicker(selection: $session.audioFormat)
 
         if session.hiddenMode {
           TextField("Decoy message", text: $session.decoy)
@@ -208,6 +214,13 @@ struct RingOverlayView: View {
           .font(.system(size: RingLayout.captionSize))
           .foregroundStyle(RingColor.secondary)
       case .result:
+        if let summary = session.fileSummary {
+          Text(summary)
+            .font(.system(size: RingLayout.captionSize))
+            .foregroundStyle(RingColor.secondary)
+            .padding(RingLayout.gap)
+            .background { accessoryGlass }
+        }
         if let guide = session.sendingGuide {
           SendingGuideButton(guide: guide, showOnAppear: true)
         }
