@@ -1,16 +1,24 @@
-//! Sine-tone melody in a 44.1 kHz WAV file, decoded with FFT pitch
-//! detection (role 3).
+//! The `MusicWav` carrier (role 3): two ways to hide an envelope in a WAV.
 //!
-//! The same 5-bit notes as [`crate::MusicMidiCarrier`] are rendered as pure
-//! sine tones in the 300–1000 Hz core of the telephone band, so a voice
-//! codec (Opus and friends) keeps them. Notes are separated by short
-//! fade-outs, which lets the decoder find note boundaries even when two
-//! consecutive notes share a pitch. See `crate::codec`.
+//! Default (no `CarrierOptions::cover_audio`): the same 5-bit notes as
+//! [`crate::MusicMidiCarrier`] are rendered as pure sine tones in the
+//! 300–1000 Hz core of the telephone band, so a voice codec (Opus and
+//! friends) keeps them. Notes are separated by short fade-outs, which lets
+//! the decoder find note boundaries even when two consecutive notes share a
+//! pitch; decoding uses FFT pitch detection. See `crate::codec`.
+//!
+//! With `CarrierOptions::cover_audio`: the envelope goes into the least
+//! significant bit of every sample of that 16-bit PCM WAV (one bit per
+//! sample slot, all channels), so the cover sounds unchanged and any
+//! lossless (file/document) sending keeps the message; re-encoding destroys
+//! the LSBs, exactly like the PNG carrier. The decoder tries the LSB layout
+//! first and falls back to the melody.
 
 use std::f32::consts::PI;
 use std::io::Cursor;
 
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
+use poly_core::envelope::{CRC_SIZE, HEADER_LEN, MAGIC, OFFSET_PAYLOAD_LEN, PAYLOAD_LEN_SIZE};
 use poly_core::{Carrier, CarrierKind, CarrierOptions, PolyError};
 use rustfft::FftPlanner;
 use rustfft::num_complex::Complex;
@@ -27,6 +35,8 @@ const BITS_PER_SAMPLE: u16 = 16;
 const CHANNELS: u16 = 1;
 /// Melody peak amplitude, about -6 dBFS.
 const AMPLITUDE: f32 = 0.5;
+/// Bits in a byte: LSB mode packs the envelope one bit per sample slot.
+const BITS_PER_BYTE: usize = 8;
 
 /// Raised-cosine fade-in at the start of every note: avoids clicks and
 /// gives the FFT a settled window.
@@ -116,52 +126,23 @@ impl Carrier for MusicWavCarrier {
         "audio/wav"
     }
 
-    fn capacity(&self, _opts: &CarrierOptions) -> Option<usize> {
-        Some(MAX_ENVELOPE_BYTES)
+    /// With default options: [`MAX_ENVELOPE_BYTES`] in a synthesized melody.
+    /// With `opts.cover_audio`: the LSB capacity of that 16-bit PCM WAV,
+    /// one bit per sample slot (all channels). `None` when the cover can't
+    /// be read, so the engine skips its size check and `encode` reports the
+    /// real cover error instead of "too small".
+    fn capacity(&self, opts: &CarrierOptions) -> Option<usize> {
+        match &opts.cover_audio {
+            Some(cover) => lsb_capacity(cover).ok(),
+            None => Some(MAX_ENVELOPE_BYTES),
+        }
     }
 
-    fn encode(&self, envelope: &[u8], _opts: &CarrierOptions) -> Result<Vec<u8>, PolyError> {
-        let notes = envelope_to_notes(envelope)?;
-        let sample_rate = SAMPLE_RATE as usize;
-        let unit = ms_to_samples(sample_rate, UNIT_MS);
-        let gap = ms_to_samples(sample_rate, NOTE_GAP_MS);
-        let fade_in = ms_to_samples(sample_rate, FADE_IN_MS);
-        let fade_out = ms_to_samples(sample_rate, FADE_OUT_MS);
-
-        let spec = WavSpec {
-            channels: CHANNELS,
-            sample_rate: SAMPLE_RATE,
-            bits_per_sample: BITS_PER_SAMPLE,
-            sample_format: SampleFormat::Int,
-        };
-        let mut out = Vec::new();
-        {
-            let mut writer = WavWriter::new(Cursor::new(&mut out), spec)
-                .map_err(|e| PolyError::Carrier(format!("could not start WAV: {e}")))?;
-            for &(pitch, duration) in &notes {
-                let span = DURATION_UNITS[duration as usize] as usize * unit;
-                let sound = span - gap.min(span);
-                let frequency = SCALE_HZ[pitch as usize];
-                for i in 0..sound {
-                    let phase = 2.0 * PI * frequency * i as f32 / sample_rate as f32;
-                    let gain = note_gain(i, sound, fade_in.min(sound), fade_out.min(sound));
-                    let sample = AMPLITUDE * gain * phase.sin();
-                    writer
-                        .write_sample((sample * i16::MAX as f32) as i16)
-                        .map_err(|e| PolyError::Carrier(format!("could not write WAV: {e}")))?;
-                }
-                // Trailing silence: marks the end of this note.
-                for _ in sound..span {
-                    writer
-                        .write_sample(0i16)
-                        .map_err(|e| PolyError::Carrier(format!("could not write WAV: {e}")))?;
-                }
-            }
-            writer
-                .finalize()
-                .map_err(|e| PolyError::Carrier(format!("could not finish WAV: {e}")))?;
+    fn encode(&self, envelope: &[u8], opts: &CarrierOptions) -> Result<Vec<u8>, PolyError> {
+        match &opts.cover_audio {
+            Some(cover) => encode_lsb(envelope, cover),
+            None => encode_melody(envelope),
         }
-        Ok(out)
     }
 
     fn decode(&self, file: &[u8]) -> Result<Vec<u8>, PolyError> {
@@ -169,50 +150,242 @@ impl Carrier for MusicWavCarrier {
         if file.len() < 12 || &file[..4] != b"RIFF" || &file[8..12] != b"WAVE" {
             return Err(PolyError::NotThisCarrier);
         }
-        let mut reader =
-            WavReader::new(Cursor::new(file)).map_err(|_| PolyError::NotThisCarrier)?;
-        let spec = reader.spec();
-        let sample_rate = spec.sample_rate as usize;
-        let channels = spec.channels as usize;
-        if sample_rate == 0 || channels == 0 {
-            return Err(PolyError::NotThisCarrier);
+        // A cover-audio file reads back through its LSBs; a synthesized
+        // melody doesn't, and falls through to the FFT.
+        if let Some(envelope) = decode_lsb(file)? {
+            return Ok(envelope);
         }
-        let limit = analysis_sample_limit(sample_rate);
-
-        // Read channel 0 into mono float samples, at most `limit` of them.
-        let mut mono: Vec<f32> = Vec::new();
-        match (spec.sample_format, spec.bits_per_sample) {
-            (SampleFormat::Int, 16) => {
-                for (i, sample) in reader.samples::<i16>().enumerate() {
-                    let value = sample.map_err(|_| PolyError::NotThisCarrier)?;
-                    if i % channels == 0 {
-                        mono.push(value as f32 / i16::MAX as f32);
-                    }
-                    if mono.len() >= limit {
-                        break;
-                    }
-                }
-            }
-            (SampleFormat::Float, 32) => {
-                for (i, sample) in reader.samples::<f32>().enumerate() {
-                    let value = sample.map_err(|_| PolyError::NotThisCarrier)?;
-                    if i % channels == 0 {
-                        mono.push(value);
-                    }
-                    if mono.len() >= limit {
-                        break;
-                    }
-                }
-            }
-            _ => return Err(PolyError::NotThisCarrier),
-        }
-        if mono.len() < minimum_samples(sample_rate) {
-            return Err(PolyError::NotThisCarrier);
-        }
-
-        let notes = detect_notes(&mono, sample_rate)?;
-        notes_to_envelope(&notes)
+        decode_melody(file)
     }
+}
+
+/// Synthesize the melody that carries `envelope` (default mode).
+fn encode_melody(envelope: &[u8]) -> Result<Vec<u8>, PolyError> {
+    let notes = envelope_to_notes(envelope)?;
+    let sample_rate = SAMPLE_RATE as usize;
+    let unit = ms_to_samples(sample_rate, UNIT_MS);
+    let gap = ms_to_samples(sample_rate, NOTE_GAP_MS);
+    let fade_in = ms_to_samples(sample_rate, FADE_IN_MS);
+    let fade_out = ms_to_samples(sample_rate, FADE_OUT_MS);
+
+    let spec = WavSpec {
+        channels: CHANNELS,
+        sample_rate: SAMPLE_RATE,
+        bits_per_sample: BITS_PER_SAMPLE,
+        sample_format: SampleFormat::Int,
+    };
+    let mut out = Vec::new();
+    {
+        let mut writer = WavWriter::new(Cursor::new(&mut out), spec)
+            .map_err(|e| PolyError::Carrier(format!("could not start WAV: {e}")))?;
+        for &(pitch, duration) in &notes {
+            let span = DURATION_UNITS[duration as usize] as usize * unit;
+            let sound = span - gap.min(span);
+            let frequency = SCALE_HZ[pitch as usize];
+            for i in 0..sound {
+                let phase = 2.0 * PI * frequency * i as f32 / sample_rate as f32;
+                let gain = note_gain(i, sound, fade_in.min(sound), fade_out.min(sound));
+                let sample = AMPLITUDE * gain * phase.sin();
+                writer
+                    .write_sample((sample * i16::MAX as f32) as i16)
+                    .map_err(|e| PolyError::Carrier(format!("could not write WAV: {e}")))?;
+            }
+            // Trailing silence: marks the end of this note.
+            for _ in sound..span {
+                writer
+                    .write_sample(0i16)
+                    .map_err(|e| PolyError::Carrier(format!("could not write WAV: {e}")))?;
+            }
+        }
+        writer
+            .finalize()
+            .map_err(|e| PolyError::Carrier(format!("could not finish WAV: {e}")))?;
+    }
+    Ok(out)
+}
+
+/// Decode a synthesized melody: find the note regions and read each note's
+/// pitch and duration back.
+fn decode_melody(file: &[u8]) -> Result<Vec<u8>, PolyError> {
+    let mut reader = WavReader::new(Cursor::new(file)).map_err(|_| PolyError::NotThisCarrier)?;
+    let spec = reader.spec();
+    let sample_rate = spec.sample_rate as usize;
+    let channels = spec.channels as usize;
+    if sample_rate == 0 || channels == 0 {
+        return Err(PolyError::NotThisCarrier);
+    }
+    let limit = analysis_sample_limit(sample_rate);
+
+    // Read channel 0 into mono float samples, at most `limit` of them.
+    let mut mono: Vec<f32> = Vec::new();
+    match (spec.sample_format, spec.bits_per_sample) {
+        (SampleFormat::Int, 16) => {
+            for (i, sample) in reader.samples::<i16>().enumerate() {
+                let value = sample.map_err(|_| PolyError::NotThisCarrier)?;
+                if i % channels == 0 {
+                    mono.push(value as f32 / i16::MAX as f32);
+                }
+                if mono.len() >= limit {
+                    break;
+                }
+            }
+        }
+        (SampleFormat::Float, 32) => {
+            for (i, sample) in reader.samples::<f32>().enumerate() {
+                let value = sample.map_err(|_| PolyError::NotThisCarrier)?;
+                if i % channels == 0 {
+                    mono.push(value);
+                }
+                if mono.len() >= limit {
+                    break;
+                }
+            }
+        }
+        _ => return Err(PolyError::NotThisCarrier),
+    }
+    if mono.len() < minimum_samples(sample_rate) {
+        return Err(PolyError::NotThisCarrier);
+    }
+
+    let notes = detect_notes(&mono, sample_rate)?;
+    notes_to_envelope(&notes)
+}
+
+// ---- Cover-audio mode (LSB) ---------------------------------------------
+
+/// Envelope bytes a 16-bit PCM WAV can hide: one bit per sample slot, all
+/// channels included, so `samples / 8`. `Err` when the file can't be read
+/// that way; `capacity` turns that into `None` so `encode` reports it.
+fn lsb_capacity(cover: &[u8]) -> Result<usize, PolyError> {
+    let reader = WavReader::new(Cursor::new(cover)).map_err(|e| cover_error(&e.to_string()))?;
+    let spec = reader.spec();
+    if !is_16_bit_pcm(&spec) {
+        return Err(unsupported_cover(&spec));
+    }
+    Ok(reader.len() as usize / BITS_PER_BYTE)
+}
+
+/// Hide `envelope` in the least significant bit of every sample of a
+/// 16-bit PCM cover WAV, most significant bit first (the layout the PNG
+/// carrier uses). Samples after the envelope keep the cover's bits, and the
+/// cover's sample rate, channel count and length are preserved.
+fn encode_lsb(envelope: &[u8], cover: &[u8]) -> Result<Vec<u8>, PolyError> {
+    let mut reader = WavReader::new(Cursor::new(cover)).map_err(|e| cover_error(&e.to_string()))?;
+    let spec = reader.spec();
+    if !is_16_bit_pcm(&spec) {
+        return Err(unsupported_cover(&spec));
+    }
+    let mut samples: Vec<i16> = reader
+        .samples::<i16>()
+        .collect::<Result<_, _>>()
+        .map_err(|e| cover_error(&e.to_string()))?;
+    let available = samples.len() / BITS_PER_BYTE;
+    if envelope.len() > available {
+        return Err(PolyError::CarrierTooSmall {
+            needed: envelope.len(),
+            available,
+        });
+    }
+
+    let bits = envelope
+        .iter()
+        .flat_map(|&byte| (0..BITS_PER_BYTE).rev().map(move |i| (byte >> i) & 1));
+    for (sample, bit) in samples.iter_mut().zip(bits) {
+        *sample = (*sample & !1) | i16::from(bit);
+    }
+
+    let mut out = Vec::new();
+    {
+        let mut writer = WavWriter::new(Cursor::new(&mut out), spec)
+            .map_err(|e| PolyError::Carrier(format!("could not start WAV: {e}")))?;
+        for sample in samples {
+            writer
+                .write_sample(sample)
+                .map_err(|e| PolyError::Carrier(format!("could not write WAV: {e}")))?;
+        }
+        writer
+            .finalize()
+            .map_err(|e| PolyError::Carrier(format!("could not finish WAV: {e}")))?;
+    }
+    Ok(out)
+}
+
+/// The envelope hidden in the sample LSBs, or `Ok(None)` when the LSB
+/// stream doesn't start with the envelope magic (an ordinary WAV, or a
+/// synthesized melody, whose LSBs are just sine noise).
+fn decode_lsb(file: &[u8]) -> Result<Option<Vec<u8>>, PolyError> {
+    let mut reader = WavReader::new(Cursor::new(file)).map_err(|_| PolyError::NotThisCarrier)?;
+    let spec = reader.spec();
+    if !is_16_bit_pcm(&spec) {
+        return Ok(None);
+    }
+    let available = reader.len() as usize / BITS_PER_BYTE;
+    let mut bits = reader
+        .samples::<i16>()
+        .map_while(|sample| sample.ok())
+        .map(|sample| (sample & 1) as u8);
+
+    // The envelope header says how many more bytes to read, so nothing past
+    // the envelope is touched.
+    let Some(header) = next_bytes(&mut bits, HEADER_LEN) else {
+        return Ok(None);
+    };
+    if !header.starts_with(&MAGIC) {
+        return Ok(None);
+    }
+    let len_field: [u8; PAYLOAD_LEN_SIZE] = header
+        [OFFSET_PAYLOAD_LEN..OFFSET_PAYLOAD_LEN + PAYLOAD_LEN_SIZE]
+        .try_into()
+        .expect("slice has PAYLOAD_LEN_SIZE bytes");
+    let rest = u32::from_be_bytes(len_field) as usize + CRC_SIZE;
+    if HEADER_LEN + rest > available {
+        // LSBs that start with POLY but claim more than the file can hold.
+        return Err(PolyError::Truncated);
+    }
+    let Some(body) = next_bytes(&mut bits, rest) else {
+        return Err(PolyError::Truncated);
+    };
+
+    let mut envelope = header;
+    envelope.extend(body);
+    Ok(Some(envelope))
+}
+
+/// The next `count` bytes of a bit stream, most significant bit first;
+/// `None` when the stream runs out early.
+fn next_bytes(bits: &mut impl Iterator<Item = u8>, count: usize) -> Option<Vec<u8>> {
+    (0..count)
+        .map(|_| {
+            let mut byte = 0u8;
+            for _ in 0..BITS_PER_BYTE {
+                byte = (byte << 1) | bits.next()?;
+            }
+            Some(byte)
+        })
+        .collect()
+}
+
+/// LSB mode reads and writes 16-bit PCM samples; 8/24-bit and float covers
+/// have no plain sample LSBs `hound` can put back bit-for-bit.
+fn is_16_bit_pcm(spec: &WavSpec) -> bool {
+    matches!(
+        (spec.sample_format, spec.bits_per_sample),
+        (SampleFormat::Int, 16)
+    )
+}
+
+/// The cover can't be read as a WAV at all.
+fn cover_error(message: &str) -> PolyError {
+    PolyError::Carrier(format!("could not read the cover audio: {message}"))
+}
+
+/// The cover is a WAV, but not one LSB mode supports.
+fn unsupported_cover(spec: &WavSpec) -> PolyError {
+    PolyError::Carrier(format!(
+        "cover audio must be a 16-bit PCM WAV (this one is {}-bit {:?}); \
+         convert it with `ffmpeg -i in.wav -c:a pcm_s16le out.wav`",
+        spec.bits_per_sample, spec.sample_format
+    ))
 }
 
 /// Find note regions in the samples and turn each into one 5-bit note.
@@ -404,5 +577,132 @@ mod tests {
             .unwrap();
         let decoded = MusicWavCarrier.decode(&file).unwrap();
         assert_eq!(&decoded[..envelope.len()], &envelope[..]);
+    }
+
+    /// A small but real envelope for the LSB tests.
+    fn lsb_envelope(payload_len: usize) -> Vec<u8> {
+        poly_core::Envelope::new(
+            poly_core::Algorithm::Fake,
+            0,
+            [9; 8],
+            vec![0xC3; payload_len],
+        )
+        .to_bytes()
+        .unwrap()
+    }
+
+    /// A 16-bit PCM WAV that looks like an ordinary little music file: two
+    /// mixed sine tones at a steady level.
+    fn cover_wav(sample_rate: u32, channels: u16, ms: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let spec = WavSpec {
+                channels,
+                sample_rate,
+                bits_per_sample: BITS_PER_SAMPLE,
+                sample_format: SampleFormat::Int,
+            };
+            let mut writer = WavWriter::new(Cursor::new(&mut out), spec).unwrap();
+            let frames = (u64::from(sample_rate) * u64::from(ms) / 1_000) as usize;
+            for frame in 0..frames {
+                let t = frame as f32 / sample_rate as f32;
+                let value =
+                    0.35 * (2.0 * PI * 220.0 * t).sin() + 0.25 * (2.0 * PI * 277.0 * t).sin();
+                let sample = (value * i16::MAX as f32) as i16;
+                for _ in 0..channels {
+                    writer.write_sample(sample).unwrap();
+                }
+            }
+            writer.finalize().unwrap();
+        }
+        out
+    }
+
+    #[test]
+    fn lsb_mode_hides_the_envelope_in_a_chosen_wav() {
+        let cover = cover_wav(SAMPLE_RATE, 2, 500);
+        let opts = CarrierOptions {
+            cover_audio: Some(cover.clone()),
+            ..Default::default()
+        };
+        // One bit per sample slot: 22,050 frames x 2 channels / 8.
+        assert_eq!(MusicWavCarrier.capacity(&opts), Some(22_050 * 2 / 8));
+
+        let envelope = lsb_envelope(200);
+        let file = MusicWavCarrier.encode(&envelope, &opts).unwrap();
+        assert_eq!(MusicWavCarrier.decode(&file).unwrap(), envelope);
+
+        // Same format, same length, and only LSBs changed.
+        let before: Vec<i16> = WavReader::new(Cursor::new(&cover))
+            .unwrap()
+            .samples::<i16>()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let mut reader = WavReader::new(Cursor::new(&file)).unwrap();
+        let spec = reader.spec();
+        assert_eq!(
+            (spec.sample_rate, spec.channels, spec.bits_per_sample),
+            (SAMPLE_RATE, 2, BITS_PER_SAMPLE)
+        );
+        let after: Vec<i16> = reader.samples::<i16>().collect::<Result<_, _>>().unwrap();
+        assert_eq!(before.len(), after.len());
+        for (a, b) in before.iter().zip(&after) {
+            assert!(
+                a.abs_diff(*b) <= 1,
+                "{a} vs {b} changed by more than the LSB"
+            );
+        }
+        assert!(before.iter().zip(&after).any(|(a, b)| a != b));
+
+        // The cover alone carries no message.
+        assert_eq!(
+            MusicWavCarrier.decode(&cover),
+            Err(PolyError::NotThisCarrier)
+        );
+    }
+
+    #[test]
+    fn lsb_mode_reports_a_too_small_cover() {
+        let cover = cover_wav(SAMPLE_RATE, 1, 10); // 441 samples -> 55 bytes
+        let opts = CarrierOptions {
+            cover_audio: Some(cover),
+            ..Default::default()
+        };
+        let envelope = lsb_envelope(100); // 123 bytes
+        assert_eq!(MusicWavCarrier.capacity(&opts), Some(441 / 8));
+        assert_eq!(
+            MusicWavCarrier.encode(&envelope, &opts),
+            Err(PolyError::CarrierTooSmall {
+                needed: envelope.len(),
+                available: 441 / 8,
+            })
+        );
+    }
+
+    #[test]
+    fn lsb_mode_needs_a_16_bit_pcm_cover() {
+        let mut out = Vec::new();
+        {
+            let spec = WavSpec {
+                channels: 1,
+                sample_rate: 8_000,
+                bits_per_sample: 8,
+                sample_format: SampleFormat::Int,
+            };
+            let mut writer = WavWriter::new(Cursor::new(&mut out), spec).unwrap();
+            for i in 0..1_000u32 {
+                writer.write_sample(((i % 100) as i8) - 50).unwrap();
+            }
+            writer.finalize().unwrap();
+        }
+        let opts = CarrierOptions {
+            cover_audio: Some(out),
+            ..Default::default()
+        };
+        assert_eq!(MusicWavCarrier.capacity(&opts), None);
+        assert!(matches!(
+            MusicWavCarrier.encode(&lsb_envelope(10), &opts),
+            Err(PolyError::Carrier(_))
+        ));
     }
 }
