@@ -11,7 +11,6 @@ trap 'rm -rf "$test_dir"' EXIT
 test_app="$test_dir/AiFlowChecks.app"
 mkdir -p "$test_app/Contents/MacOS" "$test_app/Contents/Resources"
 cp profiles/platforms.json "$test_app/Contents/Resources/platforms.json"
-cp app/polyphonia/polyphonia/shalva-transparent.gif "$test_app/Contents/Resources/shalva-transparent.gif"
 cat > "$test_app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0"><dict>
