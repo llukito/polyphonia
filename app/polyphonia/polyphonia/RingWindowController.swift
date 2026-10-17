@@ -53,7 +53,8 @@ final class RingWindowController {
         onBrowse: { [weak self] in self?.browseReceivedFile() },
         onImportContact: { [weak self] in self?.browsePublicKey() },
         onChooseCover: { [weak self] in self?.browseImageCover() },
-        onChooseAudioCover: { [weak self] in self?.browseAudioCover() }))
+        onChooseAudioCover: { [weak self] in self?.browseAudioCover() },
+        onExportKeyPhoto: { [weak self] algorithm in self?.browsePublicKeyCover(algorithm) }))
     geometrySubscription = presentation.$accessoryHeight.removeDuplicates().sink {
       [weak self] height in
       self?.positionAtAnchor(accessoryHeight: height)
@@ -121,9 +122,18 @@ final class RingWindowController {
   }
 
   private func browsePublicKey() {
-    chooseFile(title: "Import a contact public key", prompt: "Import", types: [.data]) {
+    chooseFile(title: "Import a public key or key image", prompt: "Import", types: [.data]) {
       [weak self] url in
       self?.session.importContact(fileURL: url)
+    }
+  }
+
+  private func browsePublicKeyCover(_ algorithm: CryptoAlgorithm) {
+    chooseFile(
+      title: "Choose a photo for your public key", prompt: "Use photo", types: [.png, .jpeg]
+    ) {
+      [weak self] url in
+      self?.session.exportPublicKeyImage(algorithm: algorithm, coverURL: url)
     }
   }
 

@@ -2,6 +2,7 @@ import SwiftUI
 
 enum RingAction: String, Identifiable {
   case seal, sealImage, sealAudio, open, paste, browse, save, copy, done, options
+  case addContact, cancelInvite
 
   var id: String { rawValue }
 
@@ -17,6 +18,8 @@ enum RingAction: String, Identifiable {
     case .copy: "Copy text"
     case .done: "Done"
     case .options: "Options"
+    case .addContact: "Add contact"
+    case .cancelInvite: "Cancel"
     }
   }
 
@@ -32,6 +35,8 @@ enum RingAction: String, Identifiable {
     case .copy: "doc.on.doc"
     case .done: "checkmark"
     case .options: "slider.horizontal.3"
+    case .addContact: "person.crop.circle.badge.plus"
+    case .cancelInvite: "xmark"
     }
   }
 }

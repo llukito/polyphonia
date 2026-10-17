@@ -9,6 +9,7 @@ struct RingOverlayView: View {
   let onImportContact: () -> Void
   let onChooseCover: () -> Void
   let onChooseAudioCover: () -> Void
+  var onExportKeyPhoto: (CryptoAlgorithm) -> Void = { _ in }
 
   @State private var accessoryContentHeight = RingLayout.fieldHeight
   @State private var isOptionsVisible = false
@@ -121,6 +122,7 @@ struct RingOverlayView: View {
     case .home: (.seal, .open)
     case .open: (.paste, .browse)
     case .result: (session.resultText == nil ? .save : .copy, .done)
+    case .contact: (.addContact, .cancelInvite)
     }
   }
 
@@ -140,6 +142,8 @@ struct RingOverlayView: View {
     case .copy: session.copyOpenedText()
     case .done: onDismiss()
     case .options: isOptionsVisible.toggle()
+    case .addContact: session.confirmInvitation()
+    case .cancelInvite: session.cancelInvitation()
     }
   }
 
@@ -177,6 +181,12 @@ struct RingOverlayView: View {
             .font(.system(size: RingLayout.titleSize, weight: .light))
           Text("Drop a file").font(.system(size: RingLayout.titleSize, weight: .medium))
           Text("paste an image or file / browse")
+            .font(.system(size: RingLayout.tinySize)).foregroundStyle(RingColor.secondary)
+        case .contact:
+          Image(systemName: "person.crop.circle.badge.plus")
+            .font(.system(size: RingLayout.iconSize, weight: .light))
+          Text("Contact found").font(.system(size: RingLayout.titleSize, weight: .medium))
+          Text("Name them below, then Add contact")
             .font(.system(size: RingLayout.tinySize)).foregroundStyle(RingColor.secondary)
         case .result:
           if let text = session.resultText {
@@ -326,6 +336,8 @@ struct RingOverlayView: View {
         if let guide = session.sendingGuide {
           SendingGuideButton(guide: guide, showOnAppear: true)
         }
+      case .contact:
+        invitationControls
       }
 
       if let guide = session.resendGuide {
@@ -358,6 +370,32 @@ struct RingOverlayView: View {
     .disabled(session.isWorking)
   }
 
+  private var invitationControls: some View {
+    VStack(alignment: .leading, spacing: RingLayout.gap) {
+      if let invitation = session.pendingInvitation {
+        Text("Add this public key?")
+          .font(.system(size: RingLayout.captionSize, weight: .medium))
+        TextField("Contact name · saved only on this Mac", text: $session.invitationName)
+          .textFieldStyle(RingFieldStyle())
+        Text(invitation.algorithm.title)
+          .font(.system(size: RingLayout.captionSize))
+        Text("Key fingerprint")
+          .font(.system(size: RingLayout.captionSize, weight: .medium))
+        Text(invitation.fingerprint)
+          .font(.system(size: RingLayout.captionSize, design: .monospaced))
+          .textSelection(.enabled)
+        Text(
+          "Compare this fingerprint through a trusted channel if you want to verify the key. Select Add contact on the wheel to save it."
+        )
+        .font(.system(size: RingLayout.captionSize))
+        .foregroundStyle(RingColor.secondary)
+      }
+    }
+    .foregroundStyle(RingColor.ink)
+    .padding(RingLayout.padding)
+    .background { accessoryGlass }
+  }
+
   private var contactMenu: some View {
     Menu {
       ForEach(session.contacts) { contact in
@@ -375,7 +413,12 @@ struct RingOverlayView: View {
       Button("Import public key…", action: onImportContact)
       Menu("Export my public key") {
         ForEach(CryptoAlgorithm.secureAlgorithms, id: \.self) { algorithm in
-          Button(algorithm.title + "…") { session.exportMyPublicKey(algorithm: algorithm) }
+          Menu(algorithm.title) {
+            Button("Use my photo…") { onExportKeyPhoto(algorithm) }
+            Button("Generate cover") { session.exportPublicKeyImage(algorithm: algorithm) }
+            Divider()
+            Button("Save .pub file…") { session.exportMyPublicKey(algorithm: algorithm) }
+          }
         }
       }
       Divider()

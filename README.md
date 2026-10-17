@@ -24,17 +24,20 @@ can take a few minutes while Rust dependencies are compiled.
 ## Use
 
 1. The receiver opens Polyphonia, chooses **Export my public key → ML-KEM-768**
-   from the contact menu, and sends the exported `.pub` file to the sender.
-2. The sender chooses **Import public key…**, selects that `.pub` file, and
-   selects the new contact.
+   from the contact menu, then **Use my photo…** or **Generate cover**. The key is
+   hidden in an ordinary PNG, which is copied and ready to send as an original file.
+2. The sender copies that image, chooses **Open → Paste**, gives the contact a
+   local name, and chooses **Add contact** on the wheel.
 3. The sender selects a message, presses **Command + Shift + P**, chooses
    **Seal → Image** or **Seal → Audio**, and sends the created file to the
    receiver as a file or document.
 4. The receiver copies the file and presses **Command + Shift + P**, then
-   chooses **Open → Paste file**. They can also choose **Browse** to select it.
+   chooses **Open → Paste**. They can also choose **Browse** to select it.
 
-To reply, exchange public keys in the other direction: the sender exports their
-`.pub` file, and the other person imports it before sealing a reply.
+To reply, exchange key images in the other direction. **Save .pub file…** and
+**Import public key…** remain available if you prefer key files. Key images carry
+only the public key; photo metadata is removed. Send the PNG unchanged, since
+resizing or JPEG compression can destroy the hidden key.
 
 For a hidden message, the sender enables **Use a decoy**, enters harmless decoy
 text and a passphrase, then seals the message. The receiver sees the decoy if

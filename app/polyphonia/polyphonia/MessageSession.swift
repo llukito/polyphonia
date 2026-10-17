@@ -9,6 +9,7 @@ final class MessageSession: ObservableObject {
     case home
     case open
     case result
+    case contact
   }
 
   @Published private(set) var screen: Screen = .home
@@ -34,6 +35,8 @@ final class MessageSession: ObservableObject {
   @Published private(set) var resendGuide: SendingGuide?
   @Published private(set) var contacts: [Contact] = []
   @Published var selectedContactID: UUID?
+  @Published private(set) var pendingInvitation: PublicKeyInvitation?
+  @Published var invitationName = ""
   let platformSelection = PlatformSelection()
 
   private let service: any PolyphoniaBackend
@@ -96,6 +99,8 @@ final class MessageSession: ObservableObject {
     statusMessage = selection.issue?.message
     resultText = nil
     fileSummary = nil
+    pendingInvitation = nil
+    invitationName = ""
     imageCover = nil
     audioCover = nil
     aiReview = nil
@@ -381,15 +386,25 @@ final class MessageSession: ObservableObject {
 
   func importContact(fileURL: URL) {
     guard !isWorking else { return }
+    if pendingInvitation != nil { cancelInvitation() }
+    statusMessage = nil
     isWorking = true
     Task {
       defer { isWorking = false }
       let hasFileAccess = fileURL.startAccessingSecurityScopedResource()
       defer { if hasFileAccess { fileURL.stopAccessingSecurityScopedResource() } }
       do {
-        let contact = try await Task.detached(priority: .userInitiated) {
-          try Contact.read(from: fileURL)
+        let imported = try await Task.detached(priority: .userInitiated) {
+          if let invitation = try PublicKeyImage.decode(Data(contentsOf: fileURL)) {
+            return ImportedContact.invitation(invitation)
+          }
+          return ImportedContact.file(try Contact.read(from: fileURL))
         }.value
+        if case .invitation(let invitation) = imported {
+          reviewInvitation(invitation)
+          return
+        }
+        guard case .file(let contact) = imported else { return }
         var updated = contacts.filter { $0.publicKey != contact.publicKey }
         updated.append(contact)
         try contactStore.save(updated)
@@ -401,7 +416,8 @@ final class MessageSession: ObservableObject {
           : "Imported contact: \(contact.name) · \(contact.algorithm.title)."
       } catch {
         statusMessage =
-          "Could not import that public key. Check that its algorithm and key bytes are valid."
+          (error as? PublicKeyImageError)?.localizedDescription
+          ?? "Could not import that public key. Check that its algorithm and key bytes are valid."
       }
     }
   }
@@ -430,46 +446,111 @@ final class MessageSession: ObservableObject {
     }
   }
 
+  func exportPublicKeyImage(algorithm: CryptoAlgorithm, coverURL: URL? = nil) {
+    guard !isWorking, algorithm != .fake else { return }
+    cancelAiRequest()
+    discardAiReview()
+    isWorking = true
+    statusMessage = nil
+    let backend = service
+    Task {
+      defer { isWorking = false }
+      do {
+        let (identity, fileURL) = try await Task.detached(priority: .userInitiated) {
+          let identity = try backend.identity(algorithm: algorithm)
+          let cover = try coverURL.map { try ImageCover.read(from: $0).bytes }
+          let image = try PublicKeyImage.encode(
+            publicKey: identity.publicKey, algorithm: algorithm, cover: cover)
+          let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Image-\(UUID().uuidString).png")
+          try image.write(to: url, options: .atomic)
+          return (identity, url)
+        }.value
+        pasteboard.clearContents()
+        guard pasteboard.writeObjects([fileURL as NSURL]) else {
+          throw MessageActionError.clipboardWriteFailed
+        }
+        addOwnContact(identity, algorithm: algorithm)
+        generatedFileURL = fileURL
+        pendingInvitation = nil
+        invitationName = ""
+        resultText = nil
+        fileSummary = "Public key image · \(algorithm.title)"
+        sendingGuide = nil
+        resendGuide = nil
+        statusMessage =
+          "Key image copied. Send it as an original file. They can use Open → Paste to add you."
+        screen = .result
+      } catch {
+        statusMessage = FriendlyError.message(for: error)
+      }
+    }
+  }
+
+  private func reviewInvitation(_ invitation: PublicKeyInvitation) {
+    pendingInvitation = invitation
+    invitationName =
+      contacts.first {
+        $0.publicKey == invitation.publicKey && $0.algorithm == invitation.algorithm
+      }?.name ?? ""
+    resultText = nil
+    fileSummary = nil
+    passphrase = ""
+    show(.contact)
+  }
+
+  func confirmInvitation() {
+    guard !isWorking, let invitation = pendingInvitation else { return }
+    let existing = contacts.first {
+      $0.publicKey == invitation.publicKey && $0.algorithm == invitation.algorithm
+    }
+    let name = invitationName.trimmingCharacters(in: .whitespacesAndNewlines)
+    let contact = Contact(
+      id: existing?.id ?? UUID(), name: name.isEmpty ? (existing?.name ?? "New contact") : name,
+      publicKey: invitation.publicKey, algorithm: invitation.algorithm)
+    do {
+      var updated = contacts.filter { $0.id != contact.id }
+      updated.append(contact)
+      try contactStore.save(updated)
+      contacts = updated
+      selectedContactID = contact.id
+      pendingInvitation = nil
+      invitationName = ""
+      screen = .home
+      statusMessage = "Added \(contact.name). Select a message and choose Seal to send it to them."
+    } catch {
+      statusMessage = "Could not save this contact. Please try again."
+    }
+  }
+
+  func cancelInvitation() {
+    pendingInvitation = nil
+    invitationName = ""
+    statusMessage = nil
+    screen = .open
+  }
+
   func open(fileURL: URL) {
-    guard !isWorking else { return }
     guard fileURL.isFileURL else {
       statusMessage = "Choose a file saved on this Mac."
       return
     }
-    let backend = service
-    let enteredPassphrase = passphrase.isEmpty ? nil : passphrase
-    statusMessage = nil
-    sendingGuide = nil
-    resendGuide = nil
-    isWorking = true
-
-    Task {
-      do {
-        let hasFileAccess = fileURL.startAccessingSecurityScopedResource()
-        defer { if hasFileAccess { fileURL.stopAccessingSecurityScopedResource() } }
-        let fileData = try await Task.detached(priority: .userInitiated) {
-          try Data(contentsOf: fileURL)
-        }.value
-        let opened = try await Task.detached(priority: .userInitiated) {
-          try backend.open(file: fileData, passphrase: enteredPassphrase)
-        }.value
-        resultText = opened.text
-        fileSummary = opened.summary
-        passphrase = ""
-        statusMessage = nil
-        screen = .result
-      } catch PolyError.ChecksumMismatch {
-        statusMessage = FriendlyError.message(for: PolyError.ChecksumMismatch)
-        resendGuide = platformSelection.guide(for: .stealth)
-      } catch {
-        statusMessage = FriendlyError.message(for: error)
-      }
-      isWorking = false
+    open {
+      let hasFileAccess = fileURL.startAccessingSecurityScopedResource()
+      defer { if hasFileAccess { fileURL.stopAccessingSecurityScopedResource() } }
+      return try Data(contentsOf: fileURL)
     }
   }
 
   func open(imageData: Data) {
+    open { imageData }
+  }
+
+  private func open(readFile: @escaping @Sendable () throws -> Data) {
     guard !isWorking else { return }
+    cancelAiRequest()
+    discardAiReview()
+    if pendingInvitation != nil { cancelInvitation() }
     let backend = service
     let enteredPassphrase = passphrase.isEmpty ? nil : passphrase
     statusMessage = nil
@@ -479,14 +560,23 @@ final class MessageSession: ObservableObject {
 
     Task {
       do {
-        let opened = try await Task.detached(priority: .userInitiated) {
-          try backend.open(file: imageData, passphrase: enteredPassphrase)
+        let received = try await Task.detached(priority: .userInitiated) {
+          let file = try readFile()
+          if let invitation = try PublicKeyImage.decode(file) {
+            return ReceivedFile.invitation(invitation)
+          }
+          return ReceivedFile.message(try backend.open(file: file, passphrase: enteredPassphrase))
         }.value
-        resultText = opened.text
-        fileSummary = opened.summary
-        passphrase = ""
-        statusMessage = nil
-        screen = .result
+        switch received {
+        case .invitation(let invitation): reviewInvitation(invitation)
+        case .message(let opened):
+          pendingInvitation = nil
+          resultText = opened.text
+          fileSummary = opened.summary
+          passphrase = ""
+          statusMessage = nil
+          screen = .result
+        }
       } catch {
         showOpenError(error)
       }
@@ -504,10 +594,17 @@ final class MessageSession: ObservableObject {
   }
 
   func pasteReceivedFile() {
+    guard !isWorking else { return }
     let objects = pasteboard.readObjects(
       forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
     if let fileURL = (objects as? [URL])?.first {
       open(fileURL: fileURL)
+      return
+    }
+
+    // Preserve the original PNG bytes when available; bitmap conversion is only a fallback.
+    if let pngData = pasteboard.data(forType: .png) {
+      open(imageData: pngData)
       return
     }
 
@@ -559,6 +656,16 @@ final class MessageSession: ObservableObject {
     screen = .home
     statusMessage = nil
   }
+}
+
+private enum ReceivedFile: Sendable {
+  case invitation(PublicKeyInvitation)
+  case message(OpenedMessage)
+}
+
+private enum ImportedContact: Sendable {
+  case invitation(PublicKeyInvitation)
+  case file(Contact)
 }
 
 struct Contact: Identifiable, Codable, Hashable, Sendable {
@@ -655,6 +762,7 @@ private enum FriendlyError {
     for error: Error, sealing: Bool = false, usingCover: SealMedium? = nil
   ) -> String {
     guard let coreError = error as? PolyError else {
+      if let image = error as? PublicKeyImageError { return image.localizedDescription }
       if let setup = error as? CryptoSetupError { return setup.localizedDescription }
       if error is CocoaError { return "The file could not be read or saved." }
       return "Polyphonia could not finish that action. Please try again."

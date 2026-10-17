@@ -225,6 +225,7 @@ struct AiFlowChecks {
     Task { @MainActor in
       do {
         try await Task.detached { try CryptoFlowChecks.run() }.value
+        try await PublicKeyImageChecks.run()
         try await runChecks()
         print("PASS all AI flow checks")
         exit(0)
