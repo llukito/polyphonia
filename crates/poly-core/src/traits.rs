@@ -2,7 +2,7 @@
 
 use crate::PolyError;
 use crate::types::{
-    Algorithm, CarrierKind, CarrierOptions, Identity, OpenRequest, Opened, SealRequest,
+    Algorithm, CarrierKind, CarrierOptions, Identity, OpenRequest, Opened, SealRequest, Sealed,
 };
 
 /// Encrypts a message into a payload and back. Stateless: keys come in and
@@ -17,7 +17,9 @@ pub trait Cipher: Send + Sync {
     /// Generate a fresh key pair.
     fn generate_identity(&self) -> Result<Identity, PolyError>;
 
-    /// Build the full payload (kem_block + both slots) for the recipient.
+    /// Build the payload for the recipient: kem_block + both slots for a
+    /// full message (which also starts a session, see [`Sealed`]), or
+    /// session_id + both slots when `req.flags` has the SESSION flag.
     ///
     /// - Normal mode (`decoy` is None): slot A = `message`, slot B = random bytes.
     /// - Hidden mode (`decoy` is Some): slot A = decoy, slot B = `message`,
@@ -25,7 +27,7 @@ pub trait Cipher: Send + Sync {
     /// - `decoy` Some and `passphrase` None => [`PolyError::MissingPassphrase`].
     /// - `passphrase` Some and `decoy` None => [`PolyError::InvalidRequest`].
     /// - Both slots are padded to the same length (the longer text decides).
-    fn seal(&self, req: &SealRequest) -> Result<Vec<u8>, PolyError>;
+    fn seal(&self, req: &SealRequest) -> Result<Sealed, PolyError>;
 
     /// Open a payload; returns the text and which slot opened.
     ///

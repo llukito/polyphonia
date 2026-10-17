@@ -11,7 +11,7 @@ use rand::{Rng, RngExt, SeedableRng};
 
 use crate::envelope::{ENVELOPE_OVERHEAD, Envelope, contact_id, header_aad};
 use crate::payload::{Payload, payload_len};
-use crate::types::{Algorithm, CarrierOptions, OpenRequest, Opened, SealRequest, Slot};
+use crate::types::{Algorithm, CarrierOptions, OpenRequest, SealRequest, Slot};
 use crate::{Carrier, Cipher, PolyError};
 
 /// Seed for all helper randomness.
@@ -146,8 +146,12 @@ pub fn assert_cipher_roundtrip(c: &dyn Cipher) {
             decoy: decoy.map(Into::into),
             passphrase: passphrase.map(Into::into),
             aad,
+            flags: 0,
+            session_key: None,
         })
+        .map(|sealed| sealed.payload)
     };
+    // Compared on (text, slot); the session a full message starts is checked separately.
     let open_with = |payload: &[u8], passphrase: Option<&str>, aad, key: &[u8]| {
         c.open(&OpenRequest {
             my_secret_key: key.to_vec(),
@@ -155,17 +159,15 @@ pub fn assert_cipher_roundtrip(c: &dyn Cipher) {
             payload: payload.to_vec(),
             passphrase: passphrase.map(Into::into),
             aad,
+            flags: 0,
+            session_key: None,
         })
+        .map(|o| (o.text, o.slot))
     };
     let open = |payload: &[u8], passphrase: Option<&str>| {
         open_with(payload, passphrase, aad, &me.secret_key)
     };
-    let opened = |text: &str, slot| {
-        Ok(Opened {
-            text: text.into(),
-            slot,
-        })
-    };
+    let opened = |text: &str, slot| Ok((text.to_string(), slot));
 
     // Normal mode.
     let long = "long message ".repeat(40);

@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 
 use poly_core::envelope::header_aad;
 use poly_core::payload::{KEM_BLOCK_LEN_MLKEM768, SLOT_BLOCK, SLOT_OVERHEAD};
-use poly_core::{Algorithm, Cipher, OpenRequest, Opened, PolyError, SealRequest, Slot, contact_id};
+use poly_core::{Algorithm, Cipher, OpenRequest, PolyError, SealRequest, Slot, contact_id};
 use poly_crypto::MlKemCipher;
 use proptest::prelude::*;
 
@@ -48,8 +48,11 @@ fn fixture() -> &'static Fixture {
                 decoy: Some(DECOY.into()),
                 passphrase: Some(PASS.into()),
                 aad,
+                flags: 0,
+                session_key: None,
             })
-            .unwrap();
+            .unwrap()
+            .payload;
         Fixture {
             seed: me.secret_key,
             contact_id: cid,
@@ -59,15 +62,20 @@ fn fixture() -> &'static Fixture {
     })
 }
 
-fn open(key: &[u8], payload: &[u8], passphrase: Option<&str>) -> Result<Opened, PolyError> {
+/// Open with the fixture's contact id and AAD; returns (text, slot).
+fn open(key: &[u8], payload: &[u8], passphrase: Option<&str>) -> Result<(String, Slot), PolyError> {
     let f = fixture();
-    MlKemCipher.open(&OpenRequest {
-        my_secret_key: key.to_vec(),
-        contact_id: f.contact_id,
-        payload: payload.to_vec(),
-        passphrase: passphrase.map(Into::into),
-        aad: f.aad,
-    })
+    MlKemCipher
+        .open(&OpenRequest {
+            my_secret_key: key.to_vec(),
+            contact_id: f.contact_id,
+            payload: payload.to_vec(),
+            passphrase: passphrase.map(Into::into),
+            aad: f.aad,
+            flags: 0,
+            session_key: None,
+        })
+        .map(|o| (o.text, o.slot))
 }
 
 /// Arbitrary bytes, or random bytes with exactly the shape of an ML-KEM
@@ -92,17 +100,11 @@ fn keys() -> impl Strategy<Value = Vec<u8>> {
 
 /// What SPEC §3 says opening the hidden payload gives after flipping a bit
 /// at `index`, with or without the right passphrase.
-fn expected_after_flip(index: usize, with_pass: bool) -> Result<Opened, PolyError> {
+fn expected_after_flip(index: usize, with_pass: bool) -> Result<(String, Slot), PolyError> {
     let len = fixture().hidden_payload.len();
     let slot_a_end = KEM_BLOCK_LEN_MLKEM768 + (len - KEM_BLOCK_LEN_MLKEM768) / 2;
-    let a = Ok(Opened {
-        text: DECOY.into(),
-        slot: Slot::A,
-    });
-    let b = Ok(Opened {
-        text: REAL.into(),
-        slot: Slot::B,
-    });
+    let a = Ok((DECOY.to_string(), Slot::A));
+    let b = Ok((REAL.to_string(), Slot::B));
     if index < KEM_BLOCK_LEN_MLKEM768 {
         // Wrong S (implicit rejection): neither slot opens.
         Err(PolyError::DecryptFailed)

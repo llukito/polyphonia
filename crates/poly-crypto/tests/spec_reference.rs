@@ -214,8 +214,11 @@ fn cipher_seal(to: &Recipient, message: &str, hidden: Option<(&str, &str)>) -> V
             decoy: hidden.map(|(d, _)| d.into()),
             passphrase: hidden.map(|(_, p)| p.into()),
             aad: header(&to.public_key),
+            flags: 0,
+            session_key: None,
         })
         .unwrap()
+        .payload
 }
 
 fn cipher_open(to: &Recipient, payload: &[u8], passphrase: Option<&str>) -> Opened {
@@ -226,6 +229,8 @@ fn cipher_open(to: &Recipient, payload: &[u8], passphrase: Option<&str>) -> Open
             payload: payload.to_vec(),
             passphrase: passphrase.map(Into::into),
             aad: header(&to.public_key),
+            flags: 0,
+            session_key: None,
         })
         .unwrap()
 }

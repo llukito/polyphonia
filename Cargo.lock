@@ -1466,6 +1466,7 @@ name = "poly-core"
 version = "0.1.0"
 dependencies = [
  "crc32fast",
+ "hkdf",
  "proptest",
  "rand 0.10.3",
  "sha2",

@@ -1,6 +1,7 @@
 //! Plain data types shared by the traits and the engine.
 
 use crate::PolyError;
+use crate::session::SessionKey;
 
 /// Length of a contact id: the first 8 bytes of SHA-256(public key).
 /// 64 bits makes a collision between two contacts practically impossible
@@ -131,6 +132,19 @@ pub struct SealRequest {
     pub passphrase: Option<String>,
     /// Envelope header bytes 0..15, used as AES-GCM associated data.
     pub aad: [u8; AAD_LEN],
+    /// Envelope flags. With the SESSION flag this is a session message.
+    pub flags: u8,
+    /// The session to use. Some exactly when `flags` has the SESSION flag.
+    pub session_key: Option<SessionKey>,
+}
+
+/// Result of [`crate::Cipher::seal`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sealed {
+    /// The envelope payload (kem_block or session_id || slot_A || slot_B).
+    pub payload: Vec<u8>,
+    /// The session this full message starts (None for a session message).
+    pub new_session_key: Option<SessionKey>,
 }
 
 /// Input to [`crate::Cipher::open`].
@@ -144,6 +158,10 @@ pub struct OpenRequest {
     pub passphrase: Option<String>,
     /// Envelope header bytes 0..15, used as AES-GCM associated data.
     pub aad: [u8; AAD_LEN],
+    /// Envelope flags. With the SESSION flag this is a session message.
+    pub flags: u8,
+    /// The session to use. Some exactly when `flags` has the SESSION flag.
+    pub session_key: Option<SessionKey>,
 }
 
 /// Result of [`crate::Cipher::open`].
@@ -151,6 +169,8 @@ pub struct OpenRequest {
 pub struct Opened {
     pub text: String,
     pub slot: Slot,
+    /// The session this full message started (None for a session message).
+    pub new_session_key: Option<SessionKey>,
 }
 
 /// Carrier-specific options. Add new optional fields here; every carrier

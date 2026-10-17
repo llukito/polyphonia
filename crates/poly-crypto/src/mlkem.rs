@@ -11,7 +11,7 @@ use ml_kem::{
     Decapsulate, Encapsulate, Kem, Key, KeyExport, KeySizeUser, MlKem768, Seed, SharedKey,
 };
 use poly_core::payload::{KEM_BLOCK_LEN_MLKEM768, Payload};
-use poly_core::{Algorithm, Cipher, Identity, OpenRequest, Opened, PolyError, SealRequest};
+use poly_core::{Algorithm, Cipher, Identity, OpenRequest, Opened, PolyError, SealRequest, Sealed};
 use rand::{CryptoRng, Rng};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -56,17 +56,23 @@ impl MlKemCipher {
         &self,
         req: &SealRequest,
         rng: &mut R,
-    ) -> Result<Vec<u8>, PolyError> {
+    ) -> Result<Sealed, PolyError> {
         let mode = slots::mode(req)?;
+        if req.flags != MVP_FLAGS || req.session_key.is_some() {
+            return Err(PolyError::NotImplemented("SESSION mode in MlKemCipher"));
+        }
         let (kem_block, shared) = public_key(&req.recipient_public_key)?.encapsulate_with_rng(rng);
         let shared = shared_secret(shared);
         let (slot_a, slot_b) = slots::seal_slots(&shared, req, mode, rng)?;
-        Ok(Payload {
-            kem_block: kem_block.to_vec(),
-            slot_a,
-            slot_b,
-        }
-        .join())
+        Ok(Sealed {
+            payload: Payload {
+                kem_block: kem_block.to_vec(),
+                slot_a,
+                slot_b,
+            }
+            .join(),
+            new_session_key: None,
+        })
     }
 }
 
@@ -106,11 +112,14 @@ impl Cipher for MlKemCipher {
         Self::identity_from_seed(&seed[..])
     }
 
-    fn seal(&self, req: &SealRequest) -> Result<Vec<u8>, PolyError> {
+    fn seal(&self, req: &SealRequest) -> Result<Sealed, PolyError> {
         self.seal_with_rng(req, &mut rand::rng())
     }
 
     fn open(&self, req: &OpenRequest) -> Result<Opened, PolyError> {
+        if req.flags != MVP_FLAGS || req.session_key.is_some() {
+            return Err(PolyError::NotImplemented("SESSION mode in MlKemCipher"));
+        }
         let dk = secret_key(&req.my_secret_key)?;
         let payload = Payload::split(&req.payload, Algorithm::MlKem768, MVP_FLAGS)?;
         let kem_block = Ciphertext::try_from(payload.kem_block.as_slice())
@@ -144,8 +153,11 @@ mod tests {
                 decoy: None,
                 passphrase: None,
                 aad: poly_core::envelope::header_aad(Algorithm::MlKem768, 0, &cid),
+                flags: 0,
+                session_key: None,
             })
-            .unwrap();
+            .unwrap()
+            .payload;
         assert_eq!(
             payload.len(),
             poly_core::payload::payload_len(Algorithm::MlKem768, 0, 2)
@@ -170,6 +182,8 @@ mod tests {
             decoy: decoy.map(Into::into),
             passphrase: pass.map(Into::into),
             aad: poly_core::envelope::header_aad(Algorithm::MlKem768, 0, &cid),
+            flags: 0,
+            session_key: None,
         }
     }
 
@@ -179,7 +193,7 @@ mod tests {
     fn passphrase_on_normal_message_returns_slot_a() {
         let me = MlKemCipher.generate_identity().unwrap();
         let req = request(me.public_key.clone(), None, None);
-        let payload = MlKemCipher.seal(&req).unwrap();
+        let payload = MlKemCipher.seal(&req).unwrap().payload;
         let opened = MlKemCipher
             .open(&OpenRequest {
                 my_secret_key: me.secret_key,
@@ -187,6 +201,8 @@ mod tests {
                 payload,
                 passphrase: Some("any passphrase".into()),
                 aad: req.aad,
+                flags: 0,
+                session_key: None,
             })
             .unwrap();
         assert_eq!(opened.text, "the real text");

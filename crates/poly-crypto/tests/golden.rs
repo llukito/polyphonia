@@ -15,7 +15,7 @@ use common::{
     NORMAL_RNG_DOMAIN, TestRng, VECTOR_SEED,
 };
 use poly_core::envelope::header_aad;
-use poly_core::{Algorithm, Cipher, Envelope, OpenRequest, Opened, SealRequest, Slot, contact_id};
+use poly_core::{Algorithm, Cipher, Envelope, OpenRequest, SealRequest, Slot, contact_id};
 use poly_crypto::MlKemCipher;
 
 /// Envelope flags of the vectors: MVP envelopes have no SESSION flag (SPEC §2).
@@ -49,17 +49,20 @@ fn envelope(message: &str, hidden: Option<(&str, &str)>, rng_domain: &[u8]) -> V
         decoy: hidden.map(|(decoy, _)| decoy.into()),
         passphrase: hidden.map(|(_, pass)| pass.into()),
         aad: header_aad(Algorithm::MlKem768, FLAGS, &cid),
+        flags: FLAGS,
+        session_key: None,
     };
     let payload = MlKemCipher
         .seal_with_rng(&req, &mut TestRng::new(rng_domain))
-        .unwrap();
+        .unwrap()
+        .payload;
     Envelope::new(Algorithm::MlKem768, FLAGS, cid, payload)
         .to_bytes()
         .unwrap()
 }
 
-/// Open a vector file from disk with the vector key.
-fn open_vector(name: &str, passphrase: Option<&str>) -> Opened {
+/// Open a vector file from disk with the vector key; returns (text, slot).
+fn open_vector(name: &str, passphrase: Option<&str>) -> (String, Slot) {
     let bytes = std::fs::read(vectors_dir().join(name)).unwrap();
     let env = Envelope::from_bytes(&bytes).unwrap();
     MlKemCipher
@@ -69,15 +72,15 @@ fn open_vector(name: &str, passphrase: Option<&str>) -> Opened {
             payload: env.payload.clone(),
             passphrase: passphrase.map(Into::into),
             aad: env.aad(),
+            flags: env.flags,
+            session_key: None,
         })
+        .map(|o| (o.text, o.slot))
         .unwrap()
 }
 
-fn opened(text: &str, slot: Slot) -> Opened {
-    Opened {
-        text: text.into(),
-        slot,
-    }
+fn opened(text: &str, slot: Slot) -> (String, Slot) {
+    (text.into(), slot)
 }
 
 #[test]

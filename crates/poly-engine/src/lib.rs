@@ -152,15 +152,18 @@ impl Engine {
         }
 
         let contact_id = contact_id(&req.recipient_public_key);
-        let payload = cipher.seal(&SealRequest {
+        let sealed = cipher.seal(&SealRequest {
             recipient_public_key: req.recipient_public_key.clone(),
             contact_id,
             message: req.message.clone(),
             decoy: req.decoy.clone(),
             passphrase: req.passphrase.clone(),
             aad: header_aad(req.algorithm, MVP_FLAGS, &contact_id),
+            flags: MVP_FLAGS,
+            session_key: None,
         })?;
-        let envelope = Envelope::new(req.algorithm, MVP_FLAGS, contact_id, payload).to_bytes()?;
+        let envelope =
+            Envelope::new(req.algorithm, MVP_FLAGS, contact_id, sealed.payload).to_bytes()?;
         debug_assert_eq!(envelope.len(), needed, "payload size formula out of sync");
 
         Ok(EncodedFile {
@@ -215,6 +218,8 @@ impl Engine {
             payload: envelope.payload,
             passphrase: req.passphrase.clone(),
             aad,
+            flags: envelope.flags,
+            session_key: None,
         })?;
         Ok(Decrypted {
             text: opened.text,

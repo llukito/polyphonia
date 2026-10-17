@@ -4,7 +4,7 @@
 //! TODO(role 1): implement exactly per docs/SPEC.md §Payload and §Key derivation.
 //! kem_block = RSA-OAEP ciphertext (256 bytes).
 
-use poly_core::{Algorithm, Cipher, Identity, OpenRequest, Opened, PolyError, SealRequest};
+use poly_core::{Algorithm, Cipher, Identity, OpenRequest, Opened, PolyError, SealRequest, Sealed};
 
 /// Classical cipher for comparison. Not implemented yet (role 1).
 #[derive(Debug, Default, Clone, Copy)]
@@ -19,7 +19,7 @@ impl Cipher for RsaCipher {
         Err(PolyError::NotImplemented("RSA-2048 cipher (role 1)"))
     }
 
-    fn seal(&self, _req: &SealRequest) -> Result<Vec<u8>, PolyError> {
+    fn seal(&self, _req: &SealRequest) -> Result<Sealed, PolyError> {
         Err(PolyError::NotImplemented("RSA-2048 cipher (role 1)"))
     }
 
