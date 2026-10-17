@@ -1,0 +1,5 @@
+# Swift binding names used by scripts/build-xcframework.sh and the Mac app.
+[bindings.swift]
+module_name = "PolyphoniaCore"
+ffi_module_name = "PolyphoniaCoreFFI"
+ffi_module_filename = "PolyphoniaCoreFFI"

@@ -20,6 +20,6 @@ path = "src/bin/uniffi-bindgen.rs"
 required-features = ["bindgen"]
 
 [dependencies]
-poly-core.workspace = true
 poly-engine.workspace = true
 uniffi.workspace = true
+thiserror.workspace = true
