@@ -11,6 +11,7 @@ struct RingOverlayView: View {
   let onChooseAudioCover: () -> Void
 
   @State private var accessoryContentHeight = RingLayout.fieldHeight
+  @State private var isOptionsVisible = false
   @State private var isSealExpanded = false
   @State private var accessoryScrollRequest: AccessoryScrollRequest?
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -22,7 +23,7 @@ struct RingOverlayView: View {
         .onTapGesture(perform: onDismiss)
 
       RingMenu(
-        leading: actions.leading, trailing: actions.trailing,
+        leading: actions.leading, trailing: actions.trailing, isOptionsVisible: isOptionsVisible,
         isPresented: presentation.isPresented,
         isWorking: session.isWorking || session.isAiWorking || session.aiReview != nil,
         releaseRequest: presentation.releaseRequest,
@@ -41,7 +42,7 @@ struct RingOverlayView: View {
         scrollRequest: accessoryScrollRequest,
         onContentHeightChange: { height in
           accessoryContentHeight = height
-          presentation.accessoryHeight = height
+          updateAccessoryHeight()
         }
       ) {
         accessories
@@ -49,7 +50,8 @@ struct RingOverlayView: View {
       .frame(
         width: RingLayout.accessoryPanelWidth,
         height: min(
-          accessoryContentHeight, RingLayout.maximumAccessoryHeight(isSealExpanded: isSealExpanded))
+          accessoryContentHeight,
+          RingLayout.maximumAccessoryHeight(isSealExpanded: isSealExpanded))
       )
       .clipShape(RoundedRectangle(cornerRadius: RingLayout.capsuleRadius))
       .overlay {
@@ -58,9 +60,13 @@ struct RingOverlayView: View {
           .allowsHitTesting(false)
       }
       .padding(.top, RingLayout.accessoryY(isSealExpanded: isSealExpanded))
+      .opacity(isOptionsVisible ? 1 : 0)
+      .allowsHitTesting(isOptionsVisible)
+      .accessibilityHidden(!isOptionsVisible)
       .opacity(presentation.isPresented ? 1 : 0)
       .offset(y: presentation.isPresented || reduceMotion ? 0 : RingLayout.gap)
       .animation(reduceMotion ? RingMotion.reduced : RingMotion.change, value: isSealExpanded)
+      .animation(reduceMotion ? RingMotion.reduced : RingMotion.change, value: isOptionsVisible)
     }
     .frame(width: RingLayout.canvasWidth, height: RingLayout.canvasHeight)
     .preferredColorScheme(.dark)
@@ -79,7 +85,18 @@ struct RingOverlayView: View {
     .onChange(of: session.isWorking) { _, working in
       if !working, session.statusMessage != nil { reveal(.status) }
     }
-    .onChange(of: session.screen) { _, _ in reveal(.status) }
+    .onChange(of: session.screen) { _, screen in
+      if screen != .home { reveal(.status) }
+    }
+    .onChange(of: isSealExpanded) { _, _ in updateAccessoryHeight() }
+    .onChange(of: isOptionsVisible) { _, _ in updateAccessoryHeight() }
+    .onChange(of: presentation.isPresented) { _, presented in
+      if presented {
+        isOptionsVisible = false
+        updateAccessoryHeight()
+      }
+    }
+    .onAppear { updateAccessoryHeight() }
     .dropDestination(for: URL.self) { files, _ in
       guard let file = files.first, !session.isWorking else { return false }
       session.open(fileURL: file)
@@ -89,7 +106,14 @@ struct RingOverlayView: View {
   }
 
   private func reveal(_ target: AccessoryTarget) {
+    isOptionsVisible = true
     accessoryScrollRequest = AccessoryScrollRequest(target: target)
+  }
+
+  private func updateAccessoryHeight() {
+    presentation.accessoryHeight = min(
+      accessoryContentHeight,
+      RingLayout.maximumAccessoryHeight(isSealExpanded: isSealExpanded))
   }
 
   private var actions: (leading: RingAction, trailing: RingAction) {
@@ -115,6 +139,7 @@ struct RingOverlayView: View {
     case .save: session.saveGeneratedFile()
     case .copy: session.copyOpenedText()
     case .done: onDismiss()
+    case .options: isOptionsVisible.toggle()
     }
   }
 
@@ -151,7 +176,7 @@ struct RingOverlayView: View {
           Image(systemName: "tray.and.arrow.down")
             .font(.system(size: RingLayout.titleSize, weight: .light))
           Text("Drop a file").font(.system(size: RingLayout.titleSize, weight: .medium))
-          Text("or paste / browse")
+          Text("paste an image or file / browse")
             .font(.system(size: RingLayout.tinySize)).foregroundStyle(RingColor.secondary)
         case .result:
           if let text = session.resultText {
@@ -180,6 +205,8 @@ struct RingOverlayView: View {
     switch hovered {
     case .seal:
       "Move out to Image or Audio"
+    case .options:
+      isOptionsVisible ? "Hide controls" : "Show controls"
     case .sealImage, .sealAudio:
       session.message.isEmpty
         ? "Selection unavailable" : "\(session.message.count) characters selected"

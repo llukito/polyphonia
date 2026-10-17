@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum RingAction: String, Identifiable {
-  case seal, sealImage, sealAudio, open, paste, browse, save, copy, done
+  case seal, sealImage, sealAudio, open, paste, browse, save, copy, done, options
 
   var id: String { rawValue }
 
@@ -11,11 +11,12 @@ enum RingAction: String, Identifiable {
     case .sealImage: "Image"
     case .sealAudio: "Audio"
     case .open: "Open"
-    case .paste: "Paste file"
+    case .paste: "Paste"
     case .browse: "Browse"
     case .save: "Save file"
     case .copy: "Copy text"
     case .done: "Done"
+    case .options: "Options"
     }
   }
 
@@ -30,6 +31,7 @@ enum RingAction: String, Identifiable {
     case .save: "arrow.down.to.line"
     case .copy: "doc.on.doc"
     case .done: "checkmark"
+    case .options: "slider.horizontal.3"
     }
   }
 }
@@ -53,7 +55,7 @@ struct RingInteraction {
     }
     hoveredAction = action(at: point, leading: leading, trailing: trailing)
     if hoveredAction == .seal { isSealExpanded = true }
-    if hoveredAction == trailing { isSealExpanded = false }
+    if hoveredAction == trailing || hoveredAction == .options { isSealExpanded = false }
   }
 
   mutating func release(at point: CGPoint, leading: RingAction, trailing: RingAction) -> RingAction?
@@ -95,9 +97,10 @@ struct RingInteraction {
     guard radius >= RingLayout.innerRadius,
       extendingOutward || radius <= RingLayout.outerRadius
     else { return nil }
-    let seamDistance = abs(abs(angle) - RingAngles.quarterTurn)
-    guard seamDistance > RingLayout.dividerGap else { return nil }
-    return offset.x < 0 ? leading : trailing
+    if RingAngles.options.contains(angle, gap: RingLayout.dividerGap) { return .options }
+    if RingAngles.seal.contains(angle, gap: RingLayout.dividerGap) { return leading }
+    if RingAngles.open.contains(angle, gap: RingLayout.dividerGap) { return trailing }
+    return nil
   }
 }
 
@@ -152,4 +155,17 @@ enum RingAngles {
   // Standard angle units used to convert atan2 radians and keep divider seams on the vertical axis.
   static let halfTurn = 180.0
   static let quarterTurn = 90.0
+
+  static let seal = 120.0...270.0
+  static let open = -90.0...60.0
+  static let options = 60.0...120.0
+}
+
+extension ClosedRange where Bound == Double {
+  func contains(_ angle: Double, gap: Double) -> Bool {
+    if upperBound > 180, angle < lowerBound - 180 {
+      return angle + 360 >= lowerBound + gap && angle + 360 <= upperBound - gap
+    }
+    return angle >= lowerBound + gap && angle <= upperBound - gap
+  }
 }

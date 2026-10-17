@@ -468,14 +468,62 @@ final class MessageSession: ObservableObject {
     }
   }
 
+  func open(imageData: Data) {
+    guard !isWorking else { return }
+    let backend = service
+    let enteredPassphrase = passphrase.isEmpty ? nil : passphrase
+    statusMessage = nil
+    sendingGuide = nil
+    resendGuide = nil
+    isWorking = true
+
+    Task {
+      do {
+        let opened = try await Task.detached(priority: .userInitiated) {
+          try backend.open(file: imageData, passphrase: enteredPassphrase)
+        }.value
+        resultText = opened.text
+        fileSummary = opened.summary
+        passphrase = ""
+        statusMessage = nil
+        screen = .result
+      } catch {
+        showOpenError(error)
+      }
+      isWorking = false
+    }
+  }
+
+  private func showOpenError(_ error: Error) {
+    if let polyError = error as? PolyError, polyError == .ChecksumMismatch {
+      statusMessage = FriendlyError.message(for: PolyError.ChecksumMismatch)
+      resendGuide = platformSelection.guide(for: .stealth)
+    } else {
+      statusMessage = FriendlyError.message(for: error)
+    }
+  }
+
   func pasteReceivedFile() {
     let objects = pasteboard.readObjects(
       forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
-    guard let fileURL = (objects as? [URL])?.first else {
-      statusMessage = "Copy a received file first, or choose Browse."
+    if let fileURL = (objects as? [URL])?.first {
+      open(fileURL: fileURL)
       return
     }
-    open(fileURL: fileURL)
+
+    // Messaging apps often put copied images on the clipboard as image data,
+    // rather than as a file URL. Convert that bitmap back to PNG for the decoder.
+    if let image = (pasteboard.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage])?
+      .first,
+      let tiffData = image.tiffRepresentation,
+      let bitmap = NSBitmapImageRep(data: tiffData),
+      let pngData = bitmap.representation(using: .png, properties: [:])
+    {
+      open(imageData: pngData)
+      return
+    }
+
+    statusMessage = "Copy an image or file first, or choose Browse."
   }
 
   func saveGeneratedFile() {
