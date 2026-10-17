@@ -1,5 +1,6 @@
-//! ML-KEM-768 golden vectors in tests/vectors/: a fixed key and a fixed RNG
-//! must always produce exactly these bytes, so a silent format change fails.
+//! ML-KEM-768 and RSA-2048 golden vectors in tests/vectors/: a fixed key and
+//! a fixed RNG must always produce exactly these bytes, so a silent format
+//! change fails.
 //! (That the bytes follow SPEC is checked independently in spec_reference.rs.)
 //!
 //! Regenerate (only when the SPEC changes, with the lead's approval) with:
@@ -12,16 +13,20 @@ use std::path::PathBuf;
 
 use common::{
     HIDDEN_DECOY, HIDDEN_MESSAGE, HIDDEN_PASSPHRASE, HIDDEN_RNG_DOMAIN, NORMAL_MESSAGE,
-    NORMAL_RNG_DOMAIN, SESSION_RNG_DOMAIN, TestRng, VECTOR_SEED,
+    NORMAL_RNG_DOMAIN, RSA_HIDDEN_RNG_DOMAIN, RSA_KEY_RNG_DOMAIN, RSA_PUBLIC_KEY_FILE,
+    RSA_SECRET_KEY_FILE, SESSION_RNG_DOMAIN, TestRng, VECTOR_SEED,
 };
 use poly_core::envelope::{FLAG_SESSION, header_aad};
 use poly_core::{
     Algorithm, Cipher, Envelope, OpenRequest, SealRequest, SessionKey, Slot, contact_id,
 };
-use poly_crypto::MlKemCipher;
+use poly_crypto::{MlKemCipher, RsaCipher};
+use rsa::RsaPrivateKey;
+use rsa::pkcs1::EncodeRsaPublicKey;
+use rsa::pkcs8::EncodePrivateKey;
 
 fn vectors_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/vectors")
+    common::vectors_dir()
 }
 
 fn check_or_write(name: &str, bytes: &[u8]) {
@@ -193,4 +198,77 @@ fn identity_from_seed_is_deterministic() {
     let b = MlKemCipher::identity_from_seed(&VECTOR_SEED).unwrap();
     assert_eq!(a, b);
     assert!(MlKemCipher::identity_from_seed(&VECTOR_SEED[..63]).is_err());
+}
+
+// ---- RSA-2048 ---------------------------------------------------------------
+
+/// RSA modulus size for the vector key (SPEC §3).
+const RSA_MODULUS_BITS: usize = 2048;
+
+/// The RSA vector key (public PKCS#1 DER, secret PKCS#8 DER), read from
+/// tests/vectors/. With POLY_REGEN_VECTORS set and no key files yet, it is
+/// generated from RSA_KEY_RNG_DOMAIN and written first.
+fn rsa_vector_key() -> (Vec<u8>, Vec<u8>) {
+    let public = vectors_dir().join(RSA_PUBLIC_KEY_FILE);
+    let secret = vectors_dir().join(RSA_SECRET_KEY_FILE);
+    if std::env::var_os("POLY_REGEN_VECTORS").is_some() && !secret.exists() {
+        let sk =
+            RsaPrivateKey::new(&mut TestRng::new(RSA_KEY_RNG_DOMAIN), RSA_MODULUS_BITS).unwrap();
+        std::fs::write(
+            &public,
+            sk.to_public_key().to_pkcs1_der().unwrap().as_bytes(),
+        )
+        .unwrap();
+        std::fs::write(&secret, sk.to_pkcs8_der().unwrap().as_bytes()).unwrap();
+    }
+    (
+        std::fs::read(public).unwrap(),
+        std::fs::read(secret).unwrap(),
+    )
+}
+
+#[test]
+fn rsa_envelope_hidden() {
+    let (public_key, secret_key) = rsa_vector_key();
+    let cid = contact_id(&public_key);
+    let req = SealRequest {
+        recipient_public_key: public_key,
+        contact_id: cid,
+        message: HIDDEN_MESSAGE.into(),
+        decoy: Some(HIDDEN_DECOY.into()),
+        passphrase: Some(HIDDEN_PASSPHRASE.into()),
+        aad: header_aad(Algorithm::Rsa2048, 0, &cid),
+        flags: 0,
+        session_key: None,
+    };
+    let payload = RsaCipher
+        .seal_with_rng(&req, &mut TestRng::new(RSA_HIDDEN_RNG_DOMAIN))
+        .unwrap()
+        .payload;
+    let bytes = Envelope::new(Algorithm::Rsa2048, 0, cid, payload)
+        .to_bytes()
+        .unwrap();
+    check_or_write("rsa_envelope_hidden.bin", &bytes);
+
+    let golden = std::fs::read(vectors_dir().join("rsa_envelope_hidden.bin")).unwrap();
+    let env = Envelope::from_bytes(&golden).unwrap();
+    let open = |passphrase: Option<&str>| {
+        RsaCipher
+            .open(&OpenRequest {
+                my_secret_key: secret_key.clone(),
+                contact_id: env.contact_id,
+                payload: env.payload.clone(),
+                passphrase: passphrase.map(Into::into),
+                aad: env.aad(),
+                flags: env.flags,
+                session_key: None,
+            })
+            .map(|o| (o.text, o.slot))
+            .unwrap()
+    };
+    assert_eq!(
+        open(Some(HIDDEN_PASSPHRASE)),
+        opened(HIDDEN_MESSAGE, Slot::B)
+    );
+    assert_eq!(open(None), opened(HIDDEN_DECOY, Slot::A));
 }

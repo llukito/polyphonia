@@ -194,10 +194,131 @@ impl Cipher for RsaCipher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use poly_core::envelope::{FLAG_SESSION, header_aad};
+    use poly_core::payload::{NONCE_LEN, TAG_LEN, padded_len, slot_pad};
+    use poly_core::{Slot, contact_id};
+
+    /// A key size SPEC does not allow, small enough to generate quickly.
+    const SMALL_MODULUS_BITS: usize = 1024;
 
     #[test]
-    #[ignore = "role 1: remove when implemented"]
     fn rsa_roundtrip() {
         poly_core::test_utils::assert_cipher_roundtrip(&RsaCipher);
+    }
+
+    fn request(public_key: Vec<u8>) -> SealRequest {
+        let cid = contact_id(&public_key);
+        SealRequest {
+            recipient_public_key: public_key,
+            contact_id: cid,
+            message: "the real text".into(),
+            decoy: None,
+            passphrase: None,
+            aad: header_aad(Algorithm::Rsa2048, 0, &cid),
+            flags: 0,
+            session_key: None,
+        }
+    }
+
+    #[test]
+    fn key_encodings_follow_spec() {
+        let me = RsaCipher.generate_identity().unwrap();
+        let pk = RsaPublicKey::from_pkcs1_der(&me.public_key).expect("public key is PKCS#1 DER");
+        let sk = RsaPrivateKey::from_pkcs8_der(&me.secret_key).expect("secret key is PKCS#8 DER");
+        assert_eq!(pk.size() * BITS_PER_BYTE, RSA_MODULUS_BITS);
+        assert_eq!(sk.to_public_key(), pk);
+    }
+
+    #[test]
+    fn rejects_wrong_keys() {
+        let small =
+            RsaPrivateKey::new(&mut RngAdapter(&mut rand::rng()), SMALL_MODULUS_BITS).unwrap();
+        let small_pk = small.to_public_key().to_pkcs1_der().unwrap();
+        let small_sk = small.to_pkcs8_der().unwrap();
+        assert!(matches!(
+            public_key(small_pk.as_bytes()),
+            Err(PolyError::InvalidKey(_))
+        ));
+        assert!(matches!(
+            secret_key(small_sk.as_bytes()),
+            Err(PolyError::InvalidKey(_))
+        ));
+        assert!(matches!(
+            public_key(&[0x30, 0x00]),
+            Err(PolyError::InvalidKey(_))
+        ));
+        assert!(matches!(
+            secret_key(b"not a key"),
+            Err(PolyError::InvalidKey(_))
+        ));
+        // A PKCS#8 secret key is not a PKCS#1 public key, and vice versa.
+        let me = RsaCipher.generate_identity().unwrap();
+        assert!(public_key(&me.secret_key).is_err());
+        assert!(secret_key(&me.public_key).is_err());
+    }
+
+    /// OAEP decrypts fine but S is not 32 bytes: nothing opens.
+    #[test]
+    fn wrong_length_secret_is_decrypt_failed() {
+        let me = RsaCipher.generate_identity().unwrap();
+        let req = request(me.public_key.clone());
+        let pk = public_key(&me.public_key).unwrap();
+        let short_s = [7u8; SHARED_SECRET_LEN - 1];
+        let kem_block = pk
+            .encrypt(&mut RngAdapter(&mut rand::rng()), oaep(), &short_s)
+            .unwrap();
+        // Well-formed slot sizes so only the S length is wrong.
+        let padded = padded_len(req.message.len());
+        let slot = vec![0u8; NONCE_LEN + slot_pad(&req.message, padded).unwrap().len() + TAG_LEN];
+        let payload = [kem_block.as_slice(), &slot, &slot].concat();
+        let opened = RsaCipher.open(&OpenRequest {
+            my_secret_key: me.secret_key,
+            contact_id: req.contact_id,
+            payload,
+            passphrase: None,
+            aad: req.aad,
+            flags: 0,
+            session_key: None,
+        });
+        assert_eq!(opened, Err(PolyError::DecryptFailed));
+    }
+
+    /// The session key replaces S, so a session message opens without the
+    /// long-term secret key (SPEC §3 "Session mode").
+    #[test]
+    fn session_message_needs_no_long_term_key() {
+        let me = RsaCipher.generate_identity().unwrap();
+        let key = RsaCipher
+            .seal(&request(me.public_key.clone()))
+            .unwrap()
+            .new_session_key
+            .unwrap();
+        let cid = contact_id(&me.public_key);
+        let aad = header_aad(Algorithm::Rsa2048, FLAG_SESSION, &cid);
+        let payload = RsaCipher
+            .seal(&SealRequest {
+                recipient_public_key: Vec::new(),
+                aad,
+                flags: FLAG_SESSION,
+                session_key: Some(key.clone()),
+                ..request(me.public_key.clone())
+            })
+            .unwrap()
+            .payload;
+        let opened = RsaCipher
+            .open(&OpenRequest {
+                my_secret_key: Vec::new(),
+                contact_id: cid,
+                payload,
+                passphrase: None,
+                aad,
+                flags: FLAG_SESSION,
+                session_key: Some(key),
+            })
+            .unwrap();
+        assert_eq!(
+            (opened.text.as_str(), opened.slot),
+            ("the real text", Slot::A)
+        );
     }
 }

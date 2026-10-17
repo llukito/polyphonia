@@ -139,3 +139,37 @@ slot B nonce). The same message as a full message is 1231 bytes.
 | 27 | 60 | slot A | AES-256-GCM with key_A derived from session_key (padded decoy) |
 | 87 | 60 | slot B | AES-256-GCM with key_B derived from session_key (padded message) |
 | 147 | 4 | CRC-32 | `83363b19` |
+
+## RSA-2048 vector
+
+Produced with **RsaCipher** by `crates/poly-crypto/tests/golden.rs` and
+decoded independently by `crates/poly-crypto/tests/spec_reference.rs`.
+
+| | value |
+|---|---|
+| `rsa_public_key.der` | 270 bytes, PKCS#1 DER (2048-bit modulus) |
+| `rsa_secret_key.der` | 1218 bytes, PKCS#8 DER |
+| contact_id | `0c9c5eb5c8254b2d` |
+
+The key files are the reference. They were generated once with the test RNG
+(domain `polyphonia/test-rng/rsa-key`) and are only regenerated if missing,
+because RSA key generation depends on the `rsa` crate's prime search. The
+envelope uses the same test RNG (see "Deterministic RNG" above); bytes are
+drawn in this order: 32 bytes for S, the OAEP seed (drawn by the `rsa`
+crate), 12 bytes for the slot A nonce, 12 bytes for the slot B nonce. An
+`rsa` crate upgrade that changes how OAEP draws its seed changes this file:
+regenerate it then, with the lead's approval.
+
+### `rsa_envelope_hidden.bin` (399 bytes): hidden mode
+
+Message `the real message`, decoy `a harmless decoy`, passphrase `correct horse`,
+RNG domain `polyphonia/test-rng/rsa-hidden`.
+
+| offset | size | field | value |
+|---|---|---|---|
+| 0 | 15 | header | `504f4c59 01 02 00 0c9c5eb5c8254b2d` (POLY, v1, RSA-2048, no flags, contact_id) |
+| 15 | 4 | payload_len | `00000178` = 376 = 256 + 2 × 60 |
+| 19 | 256 | kem_block | RSA-OAEP-SHA256(public key, S) |
+| 275 | 60 | slot A | nonce (12) ‖ AES-256-GCM(key_A, padded decoy, 32 B) ‖ tag (16) |
+| 335 | 60 | slot B | nonce (12) ‖ AES-256-GCM(key_B, padded message, 32 B) ‖ tag (16) |
+| 395 | 4 | CRC-32 | `74683d9d` |
