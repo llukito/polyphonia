@@ -182,13 +182,12 @@ fn not_implemented_parts_report_it() {
         engine.generate_identity(Algorithm::MlKem768),
         Err(PolyError::NotImplemented(_))
     ));
+    // MusicMidi is implemented (role 3), so its encode succeeds; ML-KEM
+    // keeps its assertion above until the cipher lands (role 1).
     let me = me();
     let mut req = request(&me, "x");
     req.carrier = CarrierKind::MusicMidi;
-    assert!(matches!(
-        engine.encrypt(&req),
-        Err(PolyError::NotImplemented(_))
-    ));
+    assert!(engine.encrypt(&req).is_ok());
 }
 
 /// A carrier with a tiny fixed capacity, to test the capacity check.

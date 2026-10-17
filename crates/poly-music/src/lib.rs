@@ -5,3 +5,5 @@ mod wav;
 
 pub use midi::MusicMidiCarrier;
 pub use wav::MusicWavCarrier;
+
+mod codec;
