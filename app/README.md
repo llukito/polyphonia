@@ -60,6 +60,15 @@ the cover and the **×** restores the generated image. The choice lasts for the
 current ring session. If the image is too small, choose a larger one or remove it.
 Robust always generates its own grid, so the cover picker is disabled in that mode.
 
+For your own music, select **WAV**, then **Choose…** in the audio-cover row.
+Pick a 16-bit PCM WAV, then use **Seal → Audio**. Rust embeds the message in a
+new WAV while preserving the cover's length, sample rate, and channel count;
+the original is never overwritten. **Replace…** changes the cover and **×**
+restores generated music. The choice lasts for the current ring session. MIDI
+always generates its own music, so the cover picker is disabled in that format.
+If the WAV is too short, choose a longer one or shorten the message. Other WAV
+encodings must be converted to 16-bit PCM before using them as a cover.
+
 ## Destination platform and image mode
 
 The glass selector below the ring suggests the app where the text was selected.
@@ -114,7 +123,8 @@ installed, with Cargo available in `CARGO_HOME/bin` or `~/.cargo/bin`.
 4. Invoke the ring again, choose Open → Paste file (or Browse the saved PNG).
    The selected message should appear. Repeat for both image modes.
 5. Choose WAV below the ring, then Seal → Audio. Repeat Open with that file.
-   Repeat with MIDI; its file extension is `.mid`.
+   Choose a 16-bit PCM cover WAV and repeat to hear your own music in the new
+   file. Then repeat with MIDI; its file extension is `.mid`.
 6. For hidden mode, set a decoy and passphrase before sealing. Open without the
    passphrase to see the decoy, then open with the agreed passphrase to see the
    real message. The interface does not label either slot.

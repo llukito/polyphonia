@@ -8,6 +8,7 @@ struct RingOverlayView: View {
   let onBrowse: () -> Void
   let onImportContact: () -> Void
   let onChooseCover: () -> Void
+  let onChooseAudioCover: () -> Void
 
   @State private var accessoryContentHeight = RingLayout.fieldHeight
   @State private var isSealExpanded = false
@@ -198,6 +199,9 @@ struct RingOverlayView: View {
           selection: session.platformSelection, coverName: session.imageCover?.name,
           onChoose: onChooseCover, onRemove: session.removeImageCover)
         AudioFormatPicker(selection: $session.audioFormat)
+        AudioCoverControls(
+          format: session.audioFormat, coverName: session.audioCover?.name,
+          onChoose: onChooseAudioCover, onRemove: session.removeAudioCover)
 
         if session.hiddenMode {
           TextField("Decoy message", text: $session.decoy)

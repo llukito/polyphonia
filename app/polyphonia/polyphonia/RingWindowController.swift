@@ -52,7 +52,8 @@ final class RingWindowController {
         onQuit: { NSApp.terminate(nil) },
         onBrowse: { [weak self] in self?.browseReceivedFile() },
         onImportContact: { [weak self] in self?.browsePublicKey() },
-        onChooseCover: { [weak self] in self?.browseImageCover() }))
+        onChooseCover: { [weak self] in self?.browseImageCover() },
+        onChooseAudioCover: { [weak self] in self?.browseAudioCover() }))
     geometrySubscription = presentation.$accessoryHeight.removeDuplicates().sink {
       [weak self] height in
       self?.positionAtAnchor(accessoryHeight: height)
@@ -126,6 +127,13 @@ final class RingWindowController {
     chooseFile(title: "Choose a cover image", prompt: "Use image", types: [.png, .jpeg]) {
       [weak self] url in
       self?.session.selectImageCover(fileURL: url)
+    }
+  }
+
+  private func browseAudioCover() {
+    chooseFile(title: "Choose a cover WAV", prompt: "Use audio", types: [.wav]) {
+      [weak self] url in
+      self?.session.selectAudioCover(fileURL: url)
     }
   }
 
