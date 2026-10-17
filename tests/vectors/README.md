@@ -1,0 +1,52 @@
+# Golden vectors
+
+Produced with **FakeCipher + RawDebugCarrier** by `crates/poly-engine/tests/golden.rs`
+and parsed by `crates/poly-core/tests/vectors.rs`. Both tests fail if the code
+stops producing exactly these bytes, so a silent format change is caught.
+
+Regenerate only when `docs/SPEC.md` changes, with the lead's approval:
+
+```sh
+POLY_REGEN_VECTORS=1 cargo test -p poly-engine --test golden
+```
+
+## Fixed key
+
+| | value |
+|---|---|
+| fake secret key | 32 bytes of `0x11` |
+| fake public key | SHA-256(`"polyphonia/fake/public-key"` ‖ secret) |
+| contact_id | `abecdbe8cf6cfa0b` |
+
+## `envelope_min.bin` (23 bytes): empty payload
+
+| offset | bytes | field | value |
+|---|---|---|---|
+| 0 | `504f4c59` | magic | "POLY" |
+| 4 | `01` | version | 1 |
+| 5 | `ff` | algorithm | Fake |
+| 6 | `00` | flags | none |
+| 7 | `abecdbe8cf6cfa0b` | contact_id | |
+| 15 | `00000000` | payload_len | 0 |
+| 19 | `bda23cbc` | CRC-32 | |
+
+## `envelope_hidden.bin` (143 bytes): hidden mode
+
+Message `the real message`, decoy `a harmless decoy`, passphrase `correct horse`.
+FakeCipher is deterministic in hidden mode (zero nonces, no random slot), so
+this file is stable.
+
+| offset | size | field | value |
+|---|---|---|---|
+| 0 | 15 | header | same as `envelope_min.bin` |
+| 15 | 4 | payload_len | `00000078` = 120 |
+| 19 | 0 | kem_block | Fake has none |
+| 19 | 60 | slot A | nonce 12×`00` ‖ padded `"a harmless decoy"` (32 B) ‖ fake tag (16 B) |
+| 79 | 60 | slot B | nonce 12×`00` ‖ padded `"the real message"` (32 B) ‖ SHA-256(passphrase)[..16] |
+| 139 | 4 | CRC-32 | `13af963f` |
+
+Padded slot plaintext = u16 length `0010` ‖ 16 bytes of text ‖ 14 zero bytes = 32 bytes.
+
+```sh
+poly inspect tests/vectors/envelope_hidden.bin
+```
