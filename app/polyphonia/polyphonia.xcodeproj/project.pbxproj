@@ -6,6 +6,27 @@
 	objectVersion = 110;
 	objects = {
 
+/* Begin PBXAggregateTarget section */
+		A11CE0000000000000000008 /* Rust bridge */ = {
+			isa = PBXAggregateTarget;
+			buildConfigurationList = A11CE000000000000000000B;
+			buildPhases = (A11CE0000000000000000007 /* Build Rust bridge */,);
+			dependencies = ();
+			name = "Rust bridge";
+			productName = "Rust bridge";
+		};
+/* End PBXAggregateTarget section */
+
+/* Begin PBXContainerItemProxy section */
+		A11CE0000000000000000009 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 01C5BD4D3083933800901346 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A11CE0000000000000000008;
+			remoteInfo = "Rust bridge";
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXBuildFile section */
 		A11CE0000000000000000001 /* PolyphoniaCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A11CE0000000000000000004 /* PolyphoniaCore.xcframework */; };
 		A11CE0000000000000000002 /* PolyphoniaCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CE0000000000000000003 /* PolyphoniaCore.swift */; };
@@ -69,6 +90,7 @@
 			);
 			buildRules = (
 			);
+			dependencies = (A11CE000000000000000000A,);
 			fileSystemSynchronizedGroups = (
 				01C5BD573083933800901346 /* polyphonia */,
 			);
@@ -106,6 +128,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				A11CE0000000000000000008 /* Rust bridge */,
 				01C5BD543083933800901346 /* polyphonia */,
 			);
 		};
@@ -120,6 +143,25 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		A11CE0000000000000000007 /* Build Rust bridge */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = ();
+			name = "Build Rust bridge";
+			outputPaths = (
+				"$(SRCROOT)/../../build/PolyphoniaCore.xcframework",
+				"$(SRCROOT)/../../build/swift/PolyphoniaCore.swift",
+				"$(SRCROOT)/../../build/headers/module.modulemap",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "export PATH=\"${CARGO_HOME:-$HOME/.cargo}/bin:$PATH\"\nif [ \"$CONFIGURATION\" = \"Debug\" ]; then\n  \"$SRCROOT/../../scripts/build-xcframework.sh\" --debug\nelse\n  \"$SRCROOT/../../scripts/build-xcframework.sh\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		01C5BD513083933800901346 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -129,7 +171,25 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		A11CE000000000000000000A = {
+			isa = PBXTargetDependency;
+			target = A11CE0000000000000000008 /* Rust bridge */;
+			targetProxy = A11CE0000000000000000009;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		A11CE000000000000000000C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = { ENABLE_USER_SCRIPT_SANDBOXING = NO; };
+			name = Debug;
+		};
+		A11CE000000000000000000D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = { ENABLE_USER_SCRIPT_SANDBOXING = NO; };
+			name = Release;
+		};
 		01C5BD613083933900901346 /* Debug configuration for PBXProject "polyphonia" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -313,6 +373,12 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		A11CE000000000000000000B = {
+			isa = XCConfigurationList;
+			buildConfigurations = (A11CE000000000000000000C, A11CE000000000000000000D,);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		01C5BD503083933800901346 /* Build configuration list for PBXProject "polyphonia" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

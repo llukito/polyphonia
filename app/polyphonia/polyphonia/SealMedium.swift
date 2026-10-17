@@ -3,10 +3,18 @@ enum SealMedium: Sendable {
 
   var title: String { self == .image ? "Image" : "Audio" }
 
-  func carrier(imageMode: ImageMode?) -> CarrierKind? {
+  func carrier(imageMode: ImageMode?, audioFormat: AudioFormat) -> CarrierKind? {
     switch self {
     case .image: imageMode?.carrier
-    case .audio: .musicWav
+    case .audio: audioFormat.carrier
     }
   }
+}
+
+enum AudioFormat: String, CaseIterable, Identifiable, Sendable {
+  case wav, midi
+
+  var id: Self { self }
+  var title: String { self == .wav ? "WAV" : "MIDI" }
+  var carrier: CarrierKind { self == .wav ? .musicWav : .musicMidi }
 }
