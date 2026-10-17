@@ -17,6 +17,5 @@ serde.workspace = true
 serde_json.workspace = true
 clap.workspace = true
 anyhow.workspace = true
-# Small blocking HTTP client. No default features: plain http only (no TLS,
-# no gzip), since we only ever talk to a loopback server.
-ureq = { version = "3.4.2", default-features = false }
+# Small blocking HTTP client, plain http only (see the root Cargo.toml).
+ureq.workspace = true

@@ -15,6 +15,7 @@ poly-crypto = { path = "crates/poly-crypto" }
 poly-image = { path = "crates/poly-image" }
 poly-music = { path = "crates/poly-music" }
 poly-engine = { path = "crates/poly-engine" }
+poly-ai = { path = "crates/poly-ai" }
 
 # Core
 thiserror = "2.0.21"
@@ -49,6 +50,9 @@ uniffi = "0.32.2"
 # Platform check tool (role 5)
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+
+# Local AI (role 5). No default features: plain http to loopback only (no TLS, no gzip).
+ureq = { version = "3.4.2", default-features = false }
 
 # Testing
 proptest = "1.12.0"
