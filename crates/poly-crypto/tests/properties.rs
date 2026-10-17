@@ -1,11 +1,14 @@
 //! Property tests for MlKemCipher::open: it never panics, random input never
-//! decrypts, and a single flipped bit anywhere follows the SPEC §3 open rules.
+//! decrypts, and a single flipped bit anywhere follows the SPEC §3 open rules,
+//! for full messages and for session messages.
 
 use std::sync::OnceLock;
 
-use poly_core::envelope::header_aad;
-use poly_core::payload::{KEM_BLOCK_LEN_MLKEM768, SLOT_BLOCK, SLOT_OVERHEAD};
-use poly_core::{Algorithm, Cipher, OpenRequest, PolyError, SealRequest, Slot, contact_id};
+use poly_core::envelope::{FLAG_SESSION, header_aad};
+use poly_core::payload::{KEM_BLOCK_LEN_MLKEM768, SESSION_ID_LEN, SLOT_BLOCK, SLOT_OVERHEAD};
+use poly_core::{
+    Algorithm, Cipher, OpenRequest, PolyError, SealRequest, SessionKey, Slot, contact_id,
+};
 use poly_crypto::MlKemCipher;
 use proptest::prelude::*;
 
@@ -121,8 +124,114 @@ fn expected_after_flip(index: usize, with_pass: bool) -> Result<(String, Slot), 
     }
 }
 
+struct SessionFixture {
+    key: SessionKey,
+    aad: [u8; 15],
+    hidden_payload: Vec<u8>,
+}
+
+/// A session started by a full message to the fixture identity, and one
+/// hidden-mode session message in it.
+fn session_fixture() -> &'static SessionFixture {
+    static FIXTURE: OnceLock<SessionFixture> = OnceLock::new();
+    FIXTURE.get_or_init(|| {
+        let f = fixture();
+        let key = MlKemCipher
+            .open(&OpenRequest {
+                my_secret_key: f.seed.clone(),
+                contact_id: f.contact_id,
+                payload: f.hidden_payload.clone(),
+                passphrase: None,
+                aad: f.aad,
+                flags: 0,
+                session_key: None,
+            })
+            .unwrap()
+            .new_session_key
+            .unwrap();
+        let aad = header_aad(Algorithm::MlKem768, FLAG_SESSION, &f.contact_id);
+        let hidden_payload = MlKemCipher
+            .seal(&SealRequest {
+                recipient_public_key: Vec::new(),
+                contact_id: f.contact_id,
+                message: REAL.into(),
+                decoy: Some(DECOY.into()),
+                passphrase: Some(PASS.into()),
+                aad,
+                flags: FLAG_SESSION,
+                session_key: Some(key.clone()),
+            })
+            .unwrap()
+            .payload;
+        SessionFixture {
+            key,
+            aad,
+            hidden_payload,
+        }
+    })
+}
+
+/// Open a session message with the session fixture's key; returns (text, slot).
+fn open_session(payload: &[u8], passphrase: Option<&str>) -> Result<(String, Slot), PolyError> {
+    let sf = session_fixture();
+    MlKemCipher
+        .open(&OpenRequest {
+            my_secret_key: Vec::new(),
+            contact_id: fixture().contact_id,
+            payload: payload.to_vec(),
+            passphrase: passphrase.map(Into::into),
+            aad: sf.aad,
+            flags: FLAG_SESSION,
+            session_key: Some(sf.key.clone()),
+        })
+        .map(|o| (o.text, o.slot))
+}
+
+/// What SPEC §3 says opening the hidden session message gives after flipping
+/// a bit at `index`.
+fn expected_after_session_flip(index: usize, with_pass: bool) -> Result<(String, Slot), PolyError> {
+    let len = session_fixture().hidden_payload.len();
+    let slot_a_end = SESSION_ID_LEN + (len - SESSION_ID_LEN) / 2;
+    if index < SESSION_ID_LEN {
+        // Changed session id: it no longer matches the key.
+        Err(PolyError::DecryptFailed)
+    } else if index < slot_a_end {
+        if with_pass {
+            Ok((REAL.to_string(), Slot::B))
+        } else {
+            Err(PolyError::DecryptFailed)
+        }
+    } else {
+        Ok((DECOY.to_string(), Slot::A))
+    }
+}
+
+/// Random slots behind the right session id (so both slot decryptions run).
+fn session_payloads() -> impl Strategy<Value = Vec<u8>> {
+    (1..=MAX_BLOCKS).prop_flat_map(|blocks| {
+        let slot = SLOT_OVERHEAD + blocks * SLOT_BLOCK;
+        proptest::collection::vec(any::<u8>(), 2 * slot)
+            .prop_map(|slots| [session_fixture().key.id().as_slice(), &slots].concat())
+    })
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(FAST_CASES))]
+
+    #[test]
+    fn random_session_slots_never_open(payload in session_payloads()) {
+        prop_assert_eq!(open_session(&payload, None), Err(PolyError::DecryptFailed));
+    }
+
+    #[test]
+    fn flipped_bit_in_session_message_without_passphrase(
+        index in 0..session_fixture().hidden_payload.len(),
+        bit in 0..8u8,
+    ) {
+        let mut payload = session_fixture().hidden_payload.clone();
+        payload[index] ^= 1 << bit;
+        prop_assert_eq!(open_session(&payload, None), expected_after_session_flip(index, false));
+    }
 
     #[test]
     fn random_input_never_opens_without_passphrase(payload in payloads(), key in keys()) {
@@ -143,6 +252,16 @@ proptest! {
     #[test]
     fn random_input_never_opens_with_passphrase(payload in payloads(), key in keys(), pass in "[a-z]{0,12}") {
         prop_assert!(open(&key, &payload, Some(&pass)).is_err());
+    }
+
+    #[test]
+    fn flipped_bit_in_session_message_with_passphrase(
+        index in 0..session_fixture().hidden_payload.len(),
+        bit in 0..8u8,
+    ) {
+        let mut payload = session_fixture().hidden_payload.clone();
+        payload[index] ^= 1 << bit;
+        prop_assert_eq!(open_session(&payload, Some(PASS)), expected_after_session_flip(index, true));
     }
 
     #[test]

@@ -69,3 +69,40 @@ fn envelope_hidden() {
         .unwrap();
     assert_eq!((d.text.as_str(), d.slot), (HIDDEN_MESSAGE, Slot::B));
 }
+
+/// A hidden-mode session message in the (fake, deterministic) session that
+/// any full Fake message to the vector key starts.
+#[test]
+fn envelope_session() {
+    let me = FakeCipher::identity_from_secret(&VECTOR_SECRET).unwrap();
+    let engine = Engine::default();
+    let request = |session_key| EncryptRequest {
+        message: HIDDEN_MESSAGE.into(),
+        decoy: Some(HIDDEN_DECOY.into()),
+        passphrase: Some(HIDDEN_PASSPHRASE.into()),
+        recipient_public_key: me.public_key.clone(),
+        algorithm: Algorithm::Fake,
+        carrier: CarrierKind::RawDebug,
+        options: CarrierOptions::default(),
+        session_key,
+    };
+    let key = engine
+        .encrypt(&request(None))
+        .unwrap()
+        .session_key
+        .expect("a full message starts a session");
+    let file = engine.encrypt(&request(Some(key.clone()))).unwrap();
+    check_or_write("envelope_session.bin", &file.bytes);
+
+    let golden = std::fs::read(vectors_dir().join("envelope_session.bin")).unwrap();
+    let d = engine
+        .decrypt(&DecryptRequest {
+            file: golden,
+            my_secret_key: me.secret_key.clone(),
+            my_public_key: me.public_key.clone(),
+            passphrase: Some(HIDDEN_PASSPHRASE.into()),
+            session_keys: vec![key],
+        })
+        .unwrap();
+    assert_eq!((d.text.as_str(), d.slot), (HIDDEN_MESSAGE, Slot::B));
+}

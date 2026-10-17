@@ -13,6 +13,9 @@ pub const VECTOR_SEED: [u8; 64] = [0x22; 64];
 pub const HIDDEN_RNG_DOMAIN: &[u8] = b"polyphonia/test-rng/mlkem-hidden";
 /// TestRng domain for `mlkem_envelope_normal.bin`.
 pub const NORMAL_RNG_DOMAIN: &[u8] = b"polyphonia/test-rng/mlkem-normal";
+/// TestRng domain for `mlkem_envelope_session.bin`, a hidden-mode session
+/// message in the session started by `mlkem_envelope_hidden.bin`.
+pub const SESSION_RNG_DOMAIN: &[u8] = b"polyphonia/test-rng/mlkem-session";
 pub const HIDDEN_MESSAGE: &str = "the real message";
 pub const HIDDEN_DECOY: &str = "a harmless decoy";
 pub const HIDDEN_PASSPHRASE: &str = "correct horse";
