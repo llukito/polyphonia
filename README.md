@@ -1,5 +1,7 @@
 # Polyphonia
 
+<img src="app/shalva-transparent.gif" alt="Shalva, the Polyphonia mascot" width="120">
+
 Send end-to-end encrypted messages through **every messaging platform**. Powered
 by post-quantum ML-KEM-768 key exchange and end-to-end encryption.
 

@@ -76,9 +76,11 @@ enum RingLayout {
     -> CGRect
   {
     // Fit the visible ring and controls. Transparent canvas margins may extend offscreen.
-    let leftMargin = branchOuterRadius + hoverLift + shadowRadius
-    let rightMargin = outerRadius + hoverLift + shadowRadius
-    let topMargin = max(branchOuterRadius + shadowRadius, centerY - closeY + closeDiameter / 2)
+    let leftMargin = branchOuterRadius + hoverLift + shadowRadius + RingParallax.maximumOffset
+    let rightMargin = outerRadius + hoverLift + shadowRadius + RingParallax.maximumOffset
+    let topMargin = max(
+      branchOuterRadius + shadowRadius + RingParallax.maximumOffset,
+      centerY - closeY + closeDiameter / 2)
     // Reserve expansion space once, so opening the children never shifts the ring under the cursor.
     let expandedHeight = min(accessoryHeight, maximumAccessoryHeight(isSealExpanded: true))
     let bottomMargin = max(
@@ -98,11 +100,30 @@ enum RingLayout {
   }
 }
 
+/// Gentle visual movement around a stationary gesture surface keeps marking gestures predictable.
+enum RingParallax {
+  // Six points at the main rim is roughly four percent of the wheel's radius.
+  static let maximumOffset: CGFloat = 6
+  // The hub travels slightly farther to give the two surfaces a shallow sense of depth.
+  static let hubDepth: CGFloat = 1.4
+
+  static func offset(at point: CGPoint) -> CGSize {
+    let center = RingLayout.interactionDiameter / 2
+    let x = point.x - center
+    let y = point.y - center
+    // Cap the vector's length so reaching the outer branches never increases the movement.
+    let distance = max(RingLayout.outerRadius, hypot(x, y))
+    return CGSize(width: x / distance * maximumOffset, height: y / distance * maximumOffset)
+  }
+}
+
 enum RingMotion {
   // A short, well-damped spring gives the opening a little weight without repeated bouncing.
   static let appear = Animation.spring(response: 0.38, dampingFraction: 0.82)
   // Hover settles faster than presentation so the highlighted action follows the pointer.
   static let hover = Animation.spring(response: 0.24, dampingFraction: 0.86)
+  // A slower, well-damped follow gives mouse movement a little weight without bouncing.
+  static let parallax = Animation.spring(response: 0.4, dampingFraction: 0.88)
   static let change = Animation.spring(response: 0.32, dampingFraction: 0.9)
   static let dismiss = Animation.easeOut(duration: 0.16)
   static let reduced = Animation.easeOut(duration: 0.12)

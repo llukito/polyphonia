@@ -16,24 +16,13 @@ struct RingMenu<Hub: View>: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var interaction = RingInteraction()
   @State private var isDragging = false
+  @State private var parallaxOffset: CGSize = .zero
 
   var body: some View {
     ZStack {
-      if leading == .seal, interaction.isSealExpanded {
-        ForEach(RingBranch.allCases, id: \.self) { branch in
-          RingTile(
-            action: branch.action, shape: RingBranchSector(branch: branch),
-            diameter: RingLayout.interactionDiameter, labelOffset: branch.labelOffset,
-            tint: RingColor.seal, isHighlighted: interaction.hoveredAction == branch.action,
-            isWorking: isWorking, onAction: { onAction(branch.action) })
-        }
-        .transition(
-          .scale(scale: RingLayout.collapsedScale, anchor: .trailing).combined(with: .opacity))
-      }
-
-      sector(action: leading, side: .left, tint: RingColor.seal)
-      sector(action: trailing, side: .right, tint: RingColor.open)
-      sector(action: .options, side: .bottom, tint: RingColor.secondary)
+      wheel
+        .offset(reduceMotion ? .zero : parallaxOffset)
+        .animation(reduceMotion ? nil : RingMotion.parallax, value: parallaxOffset)
 
       // One stable surface owns hover, clicks, and drags, including the hub and branch corridor.
       Color.clear
@@ -43,11 +32,17 @@ struct RingMenu<Hub: View>: View {
             .onChanged { value in
               guard isPresented, !isWorking else { return }
               isDragging = true
+              followPointer(at: value.location)
               interaction.update(at: value.location, leading: leading, trailing: trailing)
             }
             .onEnded { value in
               isDragging = false
               release(at: value.location)
+              let bounds = CGRect(
+                origin: .zero,
+                size: CGSize(
+                  width: RingLayout.interactionDiameter, height: RingLayout.interactionDiameter))
+              if !bounds.contains(value.location) { parallaxOffset = .zero }
             }
         )
         .allowsHitTesting(isPresented && !isWorking)
@@ -62,14 +57,21 @@ struct RingMenu<Hub: View>: View {
         .overlay(Circle().strokeBorder(RingColor.edge, lineWidth: RingLayout.hairline))
         // Start a marking gesture in the hub; result text still supports selection and scrolling.
         .allowsHitTesting(leading == .save || leading == .copy)
+        .offset(
+          x: reduceMotion ? 0 : parallaxOffset.width * RingParallax.hubDepth,
+          y: reduceMotion ? 0 : parallaxOffset.height * RingParallax.hubDepth
+        )
+        .animation(reduceMotion ? nil : RingMotion.parallax, value: parallaxOffset)
     }
     .frame(width: RingLayout.interactionDiameter, height: RingLayout.interactionDiameter)
     .onContinuousHover(coordinateSpace: .local) { phase in
       guard isPresented, !isWorking else { return }
       switch phase {
-      case .active(let point): interaction.update(at: point, leading: leading, trailing: trailing)
+      case .active(let point):
+        followPointer(at: point)
+        interaction.update(at: point, leading: leading, trailing: trailing)
       case .ended:
-        if !isDragging { interaction.reset() }
+        if !isDragging { reset() }
       }
     }
     .scaleEffect(isPresented || reduceMotion ? 1 : RingLayout.collapsedScale)
@@ -90,6 +92,9 @@ struct RingMenu<Hub: View>: View {
     .onChange(of: isWorking) { _, working in
       if working { reset() }
     }
+    .onChange(of: reduceMotion) { _, reduced in
+      if reduced { parallaxOffset = .zero }
+    }
     .onChange(of: leading) { _, _ in reset() }
     .onChange(of: trailing) { _, _ in reset() }
     .onChange(of: interaction.isSealExpanded) { _, expanded in
@@ -98,6 +103,31 @@ struct RingMenu<Hub: View>: View {
     .onChange(of: releaseRequest) { _, request in
       if let request { release(at: request.location) }
     }
+  }
+
+  private var wheel: some View {
+    ZStack {
+      if leading == .seal, interaction.isSealExpanded {
+        ForEach(RingBranch.allCases, id: \.self) { branch in
+          RingTile(
+            action: branch.action, shape: RingBranchSector(branch: branch),
+            diameter: RingLayout.interactionDiameter, labelOffset: branch.labelOffset,
+            tint: RingColor.seal, isHighlighted: interaction.hoveredAction == branch.action,
+            isWorking: isWorking, onAction: { onAction(branch.action) })
+        }
+        .transition(
+          .scale(scale: RingLayout.collapsedScale, anchor: .trailing).combined(with: .opacity))
+      }
+
+      sector(action: leading, side: .left, tint: RingColor.seal)
+      sector(action: trailing, side: .right, tint: RingColor.open)
+      sector(action: .options, side: .bottom, tint: RingColor.secondary)
+    }
+    .frame(width: RingLayout.interactionDiameter, height: RingLayout.interactionDiameter)
+  }
+
+  private func followPointer(at point: CGPoint) {
+    parallaxOffset = reduceMotion ? .zero : RingParallax.offset(at: point)
   }
 
   private func release(at location: CGPoint) {
@@ -110,6 +140,7 @@ struct RingMenu<Hub: View>: View {
   private func reset() {
     isDragging = false
     interaction.reset()
+    parallaxOffset = .zero
   }
 
   private func sector(action: RingAction, side: RingSide, tint: Color) -> some View {
