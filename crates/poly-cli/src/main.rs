@@ -64,6 +64,10 @@ enum Command {
         /// Cover image for image carriers
         #[arg(long)]
         cover: Option<PathBuf>,
+        /// Cover audio (WAV) for the `wav` carrier: hides the message in the
+        /// file's sample LSBs instead of synthesizing a melody
+        #[arg(long)]
+        cover_audio: Option<PathBuf>,
         /// Output file (the carrier's extension is added if missing)
         #[arg(long)]
         out: PathBuf,
@@ -276,6 +280,7 @@ fn main() -> Result<()> {
             decoy,
             passphrase,
             cover,
+            cover_audio,
             mut out,
         } => {
             let (key_algorithm, recipient_public_key) = read_key(&to, PUBLIC_KEY_HEADER)?;
@@ -291,6 +296,12 @@ fn main() -> Result<()> {
             let cover_image = cover
                 .map(|p| fs::read(&p).with_context(|| format!("reading {}", p.display())))
                 .transpose()?;
+            let cover_audio = cover_audio
+                .map(|p| fs::read(&p).with_context(|| format!("reading {}", p.display())))
+                .transpose()?;
+            if cover_audio.is_some() && !matches!(carrier, CarrierArg::Wav) {
+                bail!("--cover-audio only works with --carrier wav");
+            }
             let file = engine
                 .encrypt(&EncryptRequest {
                     message: text,
@@ -301,6 +312,7 @@ fn main() -> Result<()> {
                     carrier: carrier.into(),
                     options: CarrierOptions {
                         cover_image,
+                        cover_audio,
                         ..Default::default()
                     },
                 })

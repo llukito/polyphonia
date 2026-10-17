@@ -54,6 +54,8 @@ pub struct CarrierOptions {
     #[uniffi(default = None)]
     pub cover_image: Option<Vec<u8>>,
     #[uniffi(default = None)]
+    pub cover_audio: Option<Vec<u8>>,
+    #[uniffi(default = None)]
     pub music_style: Option<String>,
     #[uniffi(default = None)]
     pub seed: Option<u64>,
@@ -253,6 +255,7 @@ impl From<CarrierOptions> for poly_core::CarrierOptions {
     fn from(o: CarrierOptions) -> Self {
         Self {
             cover_image: o.cover_image,
+            cover_audio: o.cover_audio,
             music_style: o.music_style,
             seed: o.seed,
         }
