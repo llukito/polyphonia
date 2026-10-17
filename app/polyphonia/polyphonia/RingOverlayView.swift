@@ -1,14 +1,13 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct RingOverlayView: View {
   @ObservedObject var session: MessageSession
   @ObservedObject var presentation: RingPresentation
   let onDismiss: () -> Void
   let onQuit: () -> Void
+  let onBrowse: () -> Void
+  let onImportContact: () -> Void
 
-  @State private var choosingFile = false
-  @State private var choosingContact = false
   @State private var accessoryContentHeight = RingLayout.fieldHeight
   @State private var isSealExpanded = false
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -56,18 +55,6 @@ struct RingOverlayView: View {
     .preferredColorScheme(.dark)
     .animation(reduceMotion ? RingMotion.reduced : RingMotion.change, value: session.screen)
     .animation(reduceMotion ? RingMotion.reduced : RingMotion.change, value: session.hiddenMode)
-    .fileImporter(isPresented: $choosingFile, allowedContentTypes: [.item]) { result in
-      switch result {
-      case .success(let url): session.open(fileURL: url)
-      case .failure: session.statusMessage = "Could not read that file."
-      }
-    }
-    .fileImporter(isPresented: $choosingContact, allowedContentTypes: [.data]) { result in
-      switch result {
-      case .success(let url): session.importContact(fileURL: url)
-      case .failure: session.statusMessage = "Could not import that public key."
-      }
-    }
     .dropDestination(for: URL.self) { files, _ in
       guard let file = files.first, !session.isWorking else { return false }
       session.open(fileURL: file)
@@ -94,7 +81,7 @@ struct RingOverlayView: View {
       session.hiddenMode = false
       session.show(.open)
     case .paste: session.pasteReceivedFile()
-    case .browse: choosingFile = true
+    case .browse: onBrowse()
     case .save: session.saveGeneratedFile()
     case .copy: session.copyOpenedText()
     case .done: onDismiss()
@@ -278,7 +265,7 @@ struct RingOverlayView: View {
         }
       }
       Divider()
-      Button("Import public key…") { choosingContact = true }
+      Button("Import public key…", action: onImportContact)
       Button("Export my public key…", action: session.exportMyPublicKey)
       Divider()
       Button("Quit Polyphonia", action: onQuit)
