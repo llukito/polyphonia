@@ -161,6 +161,9 @@ pub struct Opened {
 pub struct CarrierOptions {
     /// Cover image (any format the `image` crate reads) for image carriers.
     pub cover_image: Option<Vec<u8>>,
+    /// Cover audio (16-bit PCM WAV) whose sample LSBs carry the envelope,
+    /// for the `MusicWav` carrier; `None` synthesizes a melody instead.
+    pub cover_audio: Option<Vec<u8>>,
     /// Music style name for music carriers (carrier-defined; None = default).
     pub music_style: Option<String>,
     /// Seed for any randomness in the carrier, for reproducible files.
