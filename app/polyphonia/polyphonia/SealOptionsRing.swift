@@ -35,11 +35,18 @@ struct SealOptionsRing: View {
   let medium: SealMedium
   let options: [RingOption]
   let isWorking: Bool
+  var hoverLocation: CGPoint? = nil
   let isSelected: (RingOption) -> Bool
   let onSelect: (RingOption) -> Void
 
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  @State private var hoveredOption: RingOption?
+  @Namespace private var pointerSpace
+  @State private var dragLocation: CGPoint?
+
+  private var hoveredOption: RingOption? {
+    guard !isWorking, let point = dragLocation ?? hoverLocation else { return nil }
+    return option(at: point)
+  }
 
   var body: some View {
     ZStack {
@@ -68,8 +75,8 @@ struct SealOptionsRing: View {
             .foregroundStyle(highlighted || isSelected(option) ? RingColor.seal : RingColor.ink)
             .scaleEffect(highlighted && !reduceMotion ? RingLayout.labelHoverScale : 1)
             .offset(
-              x: cos(angle) * RingLayout.optionsLabelRadius,
-              y: sin(angle) * RingLayout.optionsLabelRadius)
+              x: cos(angle) * labelRadius(highlighted: highlighted),
+              y: sin(angle) * labelRadius(highlighted: highlighted))
           }
           .frame(width: RingLayout.optionsOuterRadius * 2,
                  height: RingLayout.optionsOuterRadius * 2)
@@ -80,24 +87,16 @@ struct SealOptionsRing: View {
         .allowsHitTesting(false)
         .accessibilityLabel(option.title)
         .accessibilityAddTraits(isSelected(option) ? [.isSelected] : [])
-        .offset(
-          x: highlighted && !reduceMotion ? cos(angle) * RingLayout.hoverLift : 0,
-          y: highlighted && !reduceMotion ? sin(angle) * RingLayout.hoverLift : 0)
         .animation(reduceMotion ? RingMotion.reduced : RingMotion.hover, value: highlighted)
       }
 
       Color.clear
         .contentShape(RingOptionHitShape(medium: medium, count: options.count))
-        .onContinuousHover(coordinateSpace: .local) { phase in
-          switch phase {
-          case .active(let point): hoveredOption = option(at: point)
-          case .ended: hoveredOption = nil
-          }
-        }
         .gesture(
-          DragGesture(minimumDistance: 0, coordinateSpace: .local)
-            .onChanged { hoveredOption = option(at: $0.location) }
+          DragGesture(minimumDistance: 0, coordinateSpace: .named(pointerSpace))
+            .onChanged { dragLocation = $0.location }
             .onEnded { point in
+              dragLocation = nil
               if let option = option(at: point.location) { onSelect(option) }
             })
         .allowsHitTesting(!isWorking)
@@ -105,7 +104,18 @@ struct SealOptionsRing: View {
     }
     .frame(width: RingLayout.optionsOuterRadius * 2,
            height: RingLayout.optionsOuterRadius * 2)
+    .coordinateSpace(name: pointerSpace)
+    .onChange(of: medium) { _, _ in dragLocation = nil }
+    .onChange(of: options) { _, _ in dragLocation = nil }
+    .onChange(of: isWorking) { _, working in
+      if working { dragLocation = nil }
+    }
     .transition(.scale(scale: 0.96).combined(with: .opacity))
+  }
+
+  private func labelRadius(highlighted: Bool) -> CGFloat {
+    RingLayout.optionsLabelRadius
+      + (highlighted && !reduceMotion ? RingLayout.optionsLabelHoverLift : 0)
   }
 
   func option(at point: CGPoint) -> RingOption? {
@@ -115,14 +125,12 @@ struct SealOptionsRing: View {
   static func option(
     at point: CGPoint, medium: SealMedium, options: [RingOption]
   ) -> RingOption? {
-    let center = RingLayout.optionsOuterRadius
-    let radius = hypot(point.x - center, point.y - center)
-    guard radius >= RingLayout.optionsInnerRadius,
-      radius <= RingLayout.optionsOuterRadius + RingLayout.hoverLift
-    else { return nil }
-    let angle = atan2(point.y - center, point.x - center) * 180 / .pi
+    let diameter = RingLayout.optionsOuterRadius * 2
+    let bounds = CGRect(x: 0, y: 0, width: diameter, height: diameter)
     return options.enumerated().first {
-      angles(medium: medium, index: $0.offset, count: options.count).contains(angle)
+      let range = angles(medium: medium, index: $0.offset, count: options.count)
+      return RingOptionSector(start: range.lowerBound, end: range.upperBound)
+        .path(in: bounds).contains(point)
     }?.element
   }
 

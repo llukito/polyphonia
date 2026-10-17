@@ -22,6 +22,13 @@ enum RingLayout {
   static let optionsInnerRadius: CGFloat = 248
   static let optionsOuterRadius: CGFloat = 291
   static let optionsLabelRadius: CGFloat = 269.5
+  // Only the outer labels move: two points leave their icons inside the thin sector.
+  static let optionsLabelHoverLift: CGFloat = 2
+  // Utility labels fit within the second layer's 70-point thickness, including hover scaling.
+  static let utilityLabelWidth: CGFloat = 54
+  static let utilityIconSize: CGFloat = 20
+  // Long action names may shrink by up to twenty percent to stay on one line.
+  static let minimumLabelScale: CGFloat = 0.8
   // Each child covers 66 degrees on the left; the horizontal seam leaves room between labels.
   static let branchStartAngle: Double = 110
   static let branchDividerGap: Double = 4

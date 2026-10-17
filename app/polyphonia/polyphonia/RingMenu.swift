@@ -8,15 +8,18 @@ struct RingMenu<Hub: View>: View {
   let isPresented: Bool
   let isWorking: Bool
   var utilities: [RingAction] = []
+  var hoverLocation: CGPoint? = nil
   var showBranches = false
   var releaseRequest: RingReleaseRequest? = nil
   var onExpansionChanged: (Bool) -> Void = { _ in }
   var onHoverChanged: (RingAction?) -> Void = { _ in }
   var onOuterRelease: (CGPoint) -> Void = { _ in }
+  var onPointerMoved: (CGPoint) -> Void = { _ in }
   let onAction: (RingAction) -> Void
   @ViewBuilder var hub: (RingAction?) -> Hub
 
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Namespace private var pointerSpace
   @State private var interaction = RingInteraction()
   @State private var isDragging = false
 
@@ -44,7 +47,8 @@ struct RingMenu<Hub: View>: View {
             width: cos(middle) * RingLayout.branchLabelRadius,
             height: sin(middle) * RingLayout.branchLabelRadius),
           tint: RingColor.open, isHighlighted: interaction.hoveredAction == action,
-          isWorking: isWorking && action != .cancelAi, onAction: { onAction(action) })
+          isWorking: isWorking && action != .cancelAi, compactLabel: true,
+          onAction: { onAction(action) })
       }
 
       sector(action: leading, side: .left, tint: RingColor.seal)
@@ -54,10 +58,11 @@ struct RingMenu<Hub: View>: View {
       Color.clear
         .contentShape(Circle())
         .gesture(
-          DragGesture(minimumDistance: 0, coordinateSpace: .local)
+          DragGesture(minimumDistance: 0, coordinateSpace: .named(pointerSpace))
             .onChanged { value in
               guard isPresented, !isWorking || utilities.contains(.cancelAi) else { return }
               isDragging = true
+              onPointerMoved(value.location)
               interaction.update(
                 at: value.location, leading: leading, trailing: trailing, utilities: utilities)
             }
@@ -80,15 +85,7 @@ struct RingMenu<Hub: View>: View {
         .allowsHitTesting(leading == .save || leading == .copy)
     }
     .frame(width: RingLayout.interactionDiameter, height: RingLayout.interactionDiameter)
-    .onContinuousHover(coordinateSpace: .local) { phase in
-      guard isPresented, !isWorking || utilities.contains(.cancelAi) else { return }
-      switch phase {
-      case .active(let point):
-        interaction.update(at: point, leading: leading, trailing: trailing, utilities: utilities)
-      case .ended:
-        if !isDragging { interaction.reset() }
-      }
-    }
+    .coordinateSpace(name: pointerSpace)
     .scaleEffect(isPresented || reduceMotion ? 1 : RingLayout.collapsedScale)
     .rotationEffect(.degrees(isPresented || reduceMotion ? 0 : RingLayout.collapsedRotation))
     .blur(radius: isPresented || reduceMotion ? 0 : RingLayout.collapsedBlur)
@@ -106,6 +103,14 @@ struct RingMenu<Hub: View>: View {
     }
     .onChange(of: isWorking) { _, working in
       if working { reset() }
+    }
+    .onChange(of: hoverLocation) { _, point in
+      guard isPresented, !isWorking || utilities.contains(.cancelAi) else { return }
+      if let point {
+        interaction.update(at: point, leading: leading, trailing: trailing, utilities: utilities)
+      } else if !isDragging {
+        interaction.reset()
+      }
     }
     .onChange(of: leading) { _, _ in reset() }
     .onChange(of: trailing) { _, _ in reset() }

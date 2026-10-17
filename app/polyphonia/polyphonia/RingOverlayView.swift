@@ -12,6 +12,8 @@ struct RingOverlayView: View {
 
   @State private var selectedMedium: SealMedium?
   @State private var settingsPanel: RingSettingsPanel?
+  @State private var pointerLocation: CGPoint?
+  @Namespace private var pointerSpace
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
@@ -24,6 +26,7 @@ struct RingOverlayView: View {
         SealOptionsRing(
           medium: selectedMedium, options: ringOptions,
           isWorking: session.isWorking || session.isAiWorking,
+          hoverLocation: pointerPoint(diameter: RingLayout.optionsOuterRadius * 2),
           isSelected: optionIsSelected, onSelect: selectOption)
           .position(RingLayout.center)
       }
@@ -33,10 +36,15 @@ struct RingOverlayView: View {
         isPresented: presentation.isPresented,
         isWorking: session.isWorking || session.isAiWorking,
         utilities: utilityActions,
+        hoverLocation: pointerPoint(diameter: RingLayout.interactionDiameter),
         showBranches: selectedMedium != nil,
         releaseRequest: presentation.releaseRequest,
         onHoverChanged: updateMedium,
         onOuterRelease: releaseOuterOption,
+        onPointerMoved: { point in
+          let inset = (RingLayout.canvasWidth - RingLayout.interactionDiameter) / 2
+          pointerLocation = CGPoint(x: point.x + inset, y: point.y + inset)
+        },
         onAction: perform
       ) { hovered in
         hub(hovered: hovered)
@@ -48,6 +56,15 @@ struct RingOverlayView: View {
 
     }
     .frame(width: RingLayout.canvasWidth, height: RingLayout.canvasHeight)
+    .coordinateSpace(name: pointerSpace)
+    // One tracker covers all layers. Separate SwiftUI trackers overlap by their rectangular
+    // frames even when their input surfaces use circular or sector content shapes.
+    .onContinuousHover(coordinateSpace: .named(pointerSpace)) { phase in
+      switch phase {
+      case .active(let point): pointerLocation = point
+      case .ended: pointerLocation = nil
+      }
+    }
     .preferredColorScheme(.dark)
     .animation(reduceMotion ? RingMotion.reduced : RingMotion.change, value: session.screen)
     .animation(reduceMotion ? RingMotion.reduced : RingMotion.change, value: session.hiddenMode)
@@ -68,7 +85,7 @@ struct RingOverlayView: View {
         onCancel: { session.aiReview = nil })
     }
     .onChange(of: presentation.isPresented) { _, shown in
-      if !shown { selectedMedium = nil; settingsPanel = nil }
+      if !shown { selectedMedium = nil; settingsPanel = nil; pointerLocation = nil }
     }
     .onChange(of: session.screen) { _, screen in
       if screen != .home { selectedMedium = nil }
@@ -87,6 +104,14 @@ struct RingOverlayView: View {
     case .home: (.seal, .open)
     case .open: (.paste, .browse)
     case .result: (session.resultText == nil ? .save : .copy, .done)
+    }
+  }
+
+  private func pointerPoint(diameter: CGFloat) -> CGPoint? {
+    pointerLocation.map { point in
+      CGPoint(
+        x: point.x - RingLayout.center.x + diameter / 2,
+        y: point.y - RingLayout.center.y + diameter / 2)
     }
   }
 
