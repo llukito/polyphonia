@@ -379,9 +379,5 @@ mod tests {
         .bytes;
         bytes[25] ^= 1;
         assert_eq!(inspect(bytes), Err(PolyError::ChecksumMismatch));
-        assert!(matches!(
-            generate_identity(Algorithm::MlKem768),
-            Err(PolyError::NotImplemented { .. })
-        ));
     }
 }

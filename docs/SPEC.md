@@ -271,5 +271,167 @@ with mode 0600. The app does **not** use these; it stores keys in the Keychain.
 ## 10. Future work
 
 - SESSION mode (flag bit 0): reuse a saved session key, no KEM block. Needed
-  for practical ML-KEM music messages.
+  for practical ML-KEM music messages. Proposed design in §11.
 - Encrypt the header.
+
+## 11. SESSION mode (PROPOSAL, awaiting lead approval)
+
+> Status: draft by role 1 for the lead to approve. Nothing here is
+> implemented. Once approved, the normative parts move into §2–§8 and this
+> section shrinks to a summary.
+
+### Goal
+
+An ML-KEM envelope is at least 1199 bytes: too big for RobustPng (~500 bytes)
+and ~4 minutes of music. In SESSION mode a message carries an 8-byte session
+id instead of the KEM block:
+
+| message ("hi") | envelope bytes | music at 40 bit/s |
+|---|---|---|
+| ML-KEM-768, full | 23 + 1088 + 88 = 1199 | ~4 min |
+| RSA-2048, full | 23 + 256 + 88 = 367 | ~73 s |
+| any algorithm, SESSION | 23 + 8 + 88 = **119** | **~24 s** |
+
+### How a session starts
+
+Every full message (SESSION flag 0) from a real cipher establishes a session
+as a side effect, at no extra cost in bytes. Both sides know S, so both
+derive the same values:
+
+```
+session_key = HKDF-SHA256(ikm = S,           salt = none, info = "polyphonia/v1/session-key"), 32 bytes
+session_id  = HKDF-SHA256(ikm = session_key, salt = none, info = "polyphonia/v1/session-id")[..8]
+```
+
+- The sender gets `session_key` back from `encrypt`, the receiver from `decrypt`.
+  Each stores it (Keychain in the app). Only the 32-byte key is stored; the id
+  is recomputed from it.
+- Distinct HKDF info strings keep the session key independent of key_A/key_B
+  of the full message (domain separation).
+- Sessions are **one-directional** (sender to recipient), see open question 1.
+- The app decides when to start a new session (e.g. every N messages or days)
+  simply by sending a full message again.
+
+### Envelope and payload in SESSION mode
+
+- Envelope (§2): flags bit 0 = 1. The algorithm byte stays the algorithm that
+  established the session, so a session inherits its security (an
+  RSA-established session is not post-quantum). Envelope version stays 1:
+  SESSION was reserved in v1 and no file has used it.
+- Payload (§3):
+
+  ```
+  payload = session_id (8) || slot_A || slot_B        (SESSION flag = 1)
+  payload = kem_block      || slot_A || slot_B        (SESSION flag = 0, unchanged)
+  ```
+
+  `poly_core::payload::kem_block_len(algorithm, FLAG_SESSION)` returns
+  `SESSION_ID_LEN = 8` instead of 0, so `payload_len` and `Payload::split`
+  keep working. `Payload::kem_block` holds the session id in SESSION mode
+  (field kept to limit churn).
+- Slots: unchanged, except that **S is replaced by session_key** in the key
+  derivation: `key_A = HKDF(session_key, info slot-a)`,
+  `key_B = HKDF(session_key, salt = Argon2id(passphrase, contact_id), info slot-b)`.
+  Hidden mode works as before.
+- AAD: unchanged (header bytes 0..15, which include the flags byte). The
+  session id is not in the AAD; a changed id selects a wrong or unknown key,
+  so decryption fails anyway.
+
+### Changes to the traits (§4, poly-core)
+
+```rust
+pub struct SealRequest {  /* existing fields */
+    pub flags: u8,                       // NEW: envelope flags, also used for the AAD
+    pub session_key: Option<Vec<u8>>,    // NEW: Some iff flags has SESSION
+}
+pub struct OpenRequest {  /* existing fields */
+    pub flags: u8,                       // NEW: from the envelope
+    pub session_key: Option<Vec<u8>>,    // NEW: Some iff flags has SESSION (engine picks it)
+}
+pub struct Sealed {                      // NEW: Cipher::seal returns this instead of Vec<u8>
+    pub payload: Vec<u8>,
+    pub new_session_key: Option<Vec<u8>>,  // Some for a full message from a real cipher
+}
+pub struct Opened {       /* existing fields */
+    pub new_session_key: Option<Vec<u8>>,  // NEW: Some for a full message from a real cipher
+}
+pub fn session_id(session_key: &[u8]) -> [u8; 8];  // NEW helper in poly_core
+```
+
+Rules:
+- SESSION flag set and `session_key` None (or the reverse) gives `InvalidRequest`.
+- `session_key` not 32 bytes gives `InvalidKey`.
+- In SESSION mode `seal` doesn't need the recipient public key and `open`
+  doesn't need the secret key, but the engine still checks contact_id.
+- FakeCipher supports SESSION (NOT SECURE) so carriers and golden vectors can
+  test it without real crypto: its `new_session_key` = SHA-256(
+  `"polyphonia/fake/session"` || public key), and slots work as today.
+
+### Engine changes (§6, poly-engine)
+
+- `EncryptRequest` gets `session_key: Option<Vec<u8>>`. Some means SESSION:
+  flags = 1, no KEM, capacity computed with the 8-byte session id.
+- `EncodedFile` gets `session_key: Option<Vec<u8>>`: the new session from a
+  full message, for the app to store.
+- `DecryptRequest` gets `session_keys: Vec<Vec<u8>>`: every session key the
+  receiver has stored. The engine computes each key's `session_id` and uses
+  the one matching the payload. Keeps the core stateless.
+- `Decrypted` gets `session_key: Option<Vec<u8>>`: the new session from a full message.
+- `Inspected` exposes `session_id: Option<[u8; 8]>` (no key needed).
+- `MVP_FLAGS` goes away; flags come from the request or the envelope.
+
+### Errors (§7)
+
+- New `PolyError::UnknownSession`: a SESSION message whose id matches no
+  stored key, e.g. the full message that started the session never arrived.
+  The app says "ask them to send a full message first". Grouped with crypto
+  errors; mirrored in poly-ffi.
+
+### FFI and app (§8, role 4)
+
+- Mirror the new fields and `UnknownSession`; export `sessionId(sessionKey:)`.
+- App: store the sender-side session key per contact (the one to use when
+  sending) and the receiver-side keys as a list; pass the list to `decrypt`.
+  Offer "start a new session" (= send a full message) and expire old keys.
+- CLI (§9): `--session <file>` on encrypt, `--session-out <file>` on encrypt
+  and decrypt, `--sessions <dir>` on decrypt. Same file header style as keys
+  (`polyphonia-session-key v1`, mode 0600).
+
+### Security notes
+
+- **No forward secrecy inside a session.** Whoever steals a stored session key
+  can read every message of that session (but not the long-term key or other
+  sessions). Rotating sessions limits the damage. A ratchet (new key per
+  message) is future work: messengers drop and reorder files, so keeping two
+  ratchets in sync is hard.
+- **Key reuse is safe within limits.** All messages of a session share key_A
+  (and key_B for one passphrase); random 12-byte nonces keep AES-GCM safe up
+  to 2^32 slot encryptions per key (NIST SP 800-38D), far beyond any session.
+- **Linkability.** The session id is plaintext, so an observer who extracts the
+  envelope can tell messages belong to the same session. The contact_id already
+  reveals the recipient, so this adds little; fixed by header encryption (§10).
+- **Unauthenticated, as today.** Anyone with Bob's public key can start a
+  session to Bob, just as they can send him a full message. Sessions don't add
+  sender authentication.
+
+### Tests
+
+- `assert_cipher_roundtrip` extended: a full message returns the same
+  `new_session_key` on seal and open; a SESSION message opens with it (normal and
+  hidden mode); a wrong session key gives `DecryptFailed`; the flag/key mismatch
+  gives `InvalidRequest`.
+- Engine e2e: establish, then a SESSION message through every carrier; an unknown
+  session gives `UnknownSession`; capacity uses 8 bytes, not the KEM block.
+- A Fake golden vector `envelope_session.bin`.
+
+### Open questions for the lead
+
+1. **One-directional or both ways?** Bob could reuse Alice's session to reply,
+   but the envelope doesn't say who sent a message, so Bob's app would need
+   the user to say which contact a session belongs to. Proposal: one-directional
+   for the hackathon.
+2. **FakeCipher SESSION support** as above (for carrier tests and vectors)? Proposal: yes.
+3. **Trait change** `seal -> Sealed` touches all three ciphers (all role 1). OK?
+4. **Order of work.** Proposal: (a) poly-core types + payload length + helper +
+   vectors, by role 1 under your review; (b) ciphers; (c) engine; (d) FFI and
+   CLI flags, with role 4.

@@ -178,12 +178,6 @@ fn inspect_without_key() {
 #[test]
 fn not_implemented_parts_report_it() {
     let engine = Engine::default();
-    assert!(matches!(
-        engine.generate_identity(Algorithm::MlKem768),
-        Err(PolyError::NotImplemented(_))
-    ));
-    // MusicMidi is implemented (role 3), so its encode succeeds; ML-KEM
-    // keeps its assertion above until the cipher lands (role 1).
     let me = me();
     let mut req = request(&me, "x");
     req.carrier = CarrierKind::MusicMidi;

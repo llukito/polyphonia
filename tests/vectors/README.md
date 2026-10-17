@@ -50,3 +50,60 @@ Padded slot plaintext = u16 length `0010` ‖ 16 bytes of text ‖ 14 zero bytes
 ```sh
 poly inspect tests/vectors/envelope_hidden.bin
 ```
+
+## ML-KEM-768 vectors
+
+Produced with **MlKemCipher** by `crates/poly-crypto/tests/golden.rs`
+(regenerate with `POLY_REGEN_VECTORS=1 cargo test -p poly-crypto --test golden`,
+only when `docs/SPEC.md` changes, with the lead's approval).
+`crates/poly-crypto/tests/spec_reference.rs` decodes both files with an
+independent implementation of SPEC §2–§3, so they are checked against the
+spec, not only against the code that wrote them.
+
+| | value |
+|---|---|
+| secret key (seed d ‖ z) | 64 bytes of `0x22` |
+| public key | ML-KEM-768 encapsulation key from that seed (1184 bytes) |
+| contact_id | `35818cf22b7ec19f` |
+
+### Deterministic RNG
+
+ML-KEM encapsulation and the slots need randomness. The vectors use a fully
+specified test RNG (NOT SECURE) instead of `rand`'s `StdRng`, whose algorithm
+may change between versions:
+
+```
+stream = SHA-256(domain || 0u64 BE) || SHA-256(domain || 1u64 BE) || ...
+```
+
+Bytes are taken from the stream in this order: 32 bytes for ML-KEM
+encapsulation (the message m of FIPS 203), 12 bytes for the slot A nonce, then
+12 bytes for the slot B nonce (hidden mode) or `slot_len` bytes for the random
+slot B (normal mode).
+
+### `mlkem_envelope_hidden.bin` (1231 bytes): hidden mode
+
+Message `the real message`, decoy `a harmless decoy`, passphrase `correct horse`,
+RNG domain `polyphonia/test-rng/mlkem-hidden`.
+
+| offset | size | field | value |
+|---|---|---|---|
+| 0 | 15 | header | `504f4c59 01 01 00 35818cf22b7ec19f` (POLY, v1, ML-KEM-768, no flags, contact_id) |
+| 15 | 4 | payload_len | `000004b8` = 1208 = 1088 + 2 × 60 |
+| 19 | 1088 | kem_block | ML-KEM-768 ciphertext |
+| 1107 | 60 | slot A | nonce (12) ‖ AES-256-GCM(key_A, padded decoy, 32 B) ‖ tag (16) |
+| 1167 | 60 | slot B | nonce (12) ‖ AES-256-GCM(key_B, padded message, 32 B) ‖ tag (16) |
+| 1227 | 4 | CRC-32 | `449a8f1c` |
+
+### `mlkem_envelope_normal.bin` (1199 bytes): normal mode
+
+Message `lunch at noon?`, RNG domain `polyphonia/test-rng/mlkem-normal`.
+
+| offset | size | field | value |
+|---|---|---|---|
+| 0 | 15 | header | same as above |
+| 15 | 4 | payload_len | `00000498` = 1176 = 1088 + 2 × 44 |
+| 19 | 1088 | kem_block | ML-KEM-768 ciphertext |
+| 1107 | 44 | slot A | nonce (12) ‖ AES-256-GCM(key_A, padded message, 16 B) ‖ tag (16) |
+| 1151 | 44 | slot B | 44 random bytes from the RNG |
+| 1195 | 4 | CRC-32 | `bb7a809e` |
