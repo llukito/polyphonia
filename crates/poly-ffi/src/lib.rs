@@ -252,6 +252,9 @@ pub struct EncryptRequest {
     pub algorithm: Algorithm,
     pub carrier: CarrierKind,
     pub options: CarrierOptions,
+    /// None sends a full message and starts a new session.
+    #[uniffi(default = None)]
+    pub session_key: Option<Vec<u8>>,
 }
 
 /// A finished carrier file.
@@ -263,6 +266,7 @@ pub struct EncodedFile {
     pub mime: String,
     pub carrier: CarrierKind,
     pub algorithm: Algorithm,
+    pub session_key: Option<Vec<u8>>,
 }
 
 /// A received file to open.
@@ -273,6 +277,8 @@ pub struct DecryptRequest {
     pub my_public_key: Vec<u8>,
     #[uniffi(default = None)]
     pub passphrase: Option<String>,
+    #[uniffi(default = [])]
+    pub session_keys: Vec<Vec<u8>>,
 }
 
 /// The opened message.
@@ -282,6 +288,7 @@ pub struct Decrypted {
     pub slot: Slot,
     pub carrier: CarrierKind,
     pub algorithm: Algorithm,
+    pub session_key: Option<Vec<u8>>,
 }
 
 /// Header information readable without a key.
@@ -291,6 +298,7 @@ pub struct Inspected {
     pub algorithm: Algorithm,
     pub contact_id: Vec<u8>,
     pub payload_len: u64,
+    pub is_session: bool,
 }
 
 /// Every error the core can return. Messages never contain secrets.
@@ -464,6 +472,31 @@ pub fn contact_id(public_key: Vec<u8>) -> Vec<u8> {
     poly_engine::contact_id(&public_key).to_vec()
 }
 
+/// Validate an imported public key through its cipher before saving the contact.
+/// A discarded empty full message exercises the cipher's complete key parser.
+#[uniffi::export]
+pub fn validate_public_key(public_key: Vec<u8>, algorithm: Algorithm) -> Result<(), PolyError> {
+    ENGINE.encrypt(&poly_engine::EncryptRequest {
+        message: String::new(),
+        decoy: None,
+        passphrase: None,
+        recipient_public_key: public_key,
+        algorithm: algorithm.into(),
+        carrier: poly_core::CarrierKind::RawDebug,
+        options: Default::default(),
+        session_key: None,
+    })?;
+    Ok(())
+}
+
+/// Stable id for a session key, for Keychain indexing. Never logs the key.
+#[uniffi::export]
+pub fn session_id(session_key: Vec<u8>) -> Result<Vec<u8>, PolyError> {
+    Ok(poly_core::SessionKey::try_from(session_key.as_slice())?
+        .id()
+        .to_vec())
+}
+
 /// Encrypt a message into a carrier file.
 #[uniffi::export]
 pub fn encrypt(request: EncryptRequest) -> Result<EncodedFile, PolyError> {
@@ -475,7 +508,11 @@ pub fn encrypt(request: EncryptRequest) -> Result<EncodedFile, PolyError> {
         algorithm: request.algorithm.into(),
         carrier: request.carrier.into(),
         options: request.options.into(),
-        session_key: None,
+        session_key: request
+            .session_key
+            .as_deref()
+            .map(poly_core::SessionKey::try_from)
+            .transpose()?,
     })?;
     Ok(EncodedFile {
         bytes: file.bytes,
@@ -483,6 +520,7 @@ pub fn encrypt(request: EncryptRequest) -> Result<EncodedFile, PolyError> {
         mime: file.mime.into(),
         carrier: file.carrier.into(),
         algorithm: file.algorithm.into(),
+        session_key: file.session_key.map(|key| key.as_bytes().to_vec()),
     })
 }
 
@@ -494,13 +532,18 @@ pub fn decrypt(request: DecryptRequest) -> Result<Decrypted, PolyError> {
         my_secret_key: request.my_secret_key,
         my_public_key: request.my_public_key,
         passphrase: request.passphrase,
-        session_keys: Vec::new(),
+        session_keys: request
+            .session_keys
+            .iter()
+            .map(|bytes| poly_core::SessionKey::try_from(bytes.as_slice()))
+            .collect::<Result<_, _>>()?,
     })?;
     Ok(Decrypted {
         text: d.text,
         slot: d.slot.into(),
         carrier: d.carrier.into(),
         algorithm: d.algorithm.into(),
+        session_key: d.session_key.map(|key| key.as_bytes().to_vec()),
     })
 }
 
@@ -510,6 +553,7 @@ pub fn inspect(file: Vec<u8>) -> Result<Inspected, PolyError> {
     let i = ENGINE.inspect(&file)?;
     Ok(Inspected {
         carrier: i.carrier.into(),
+        is_session: i.envelope.is_session(),
         algorithm: i.envelope.algorithm.into(),
         contact_id: i.envelope.contact_id.to_vec(),
         payload_len: i.envelope.payload.len() as u64,
@@ -531,6 +575,7 @@ mod tests {
             algorithm: Algorithm::Fake,
             carrier: CarrierKind::RawDebug,
             options: CarrierOptions::default(),
+            session_key: None,
         })
         .unwrap();
         assert_eq!(file.extension, "bin");
@@ -541,6 +586,7 @@ mod tests {
                 my_secret_key: me.secret_key.clone(),
                 my_public_key: me.public_key.clone(),
                 passphrase: passphrase.map(Into::into),
+                session_keys: Vec::new(),
             })
         };
         let b = open(Some("pw")).unwrap();
@@ -554,6 +600,49 @@ mod tests {
     }
 
     #[test]
+    fn rejects_malformed_session_keys_at_the_ffi_boundary() {
+        assert!(matches!(
+            session_id(vec![0]),
+            Err(PolyError::InvalidKey { .. })
+        ));
+        let me = generate_identity(Algorithm::MlKem768).unwrap();
+        let request = EncryptRequest {
+            message: "test".into(),
+            decoy: None,
+            passphrase: None,
+            recipient_public_key: me.public_key.clone(),
+            algorithm: Algorithm::MlKem768,
+            carrier: CarrierKind::RawDebug,
+            options: CarrierOptions::default(),
+            session_key: Some(vec![0]),
+        };
+        assert!(matches!(
+            encrypt(request.clone()),
+            Err(PolyError::InvalidKey { .. })
+        ));
+        let full = encrypt(EncryptRequest {
+            session_key: None,
+            ..request
+        })
+        .unwrap();
+        let key = full.session_key.as_ref().unwrap();
+        assert_eq!(
+            session_id(key.clone()).unwrap().len(),
+            poly_core::payload::SESSION_ID_LEN
+        );
+        assert!(matches!(
+            decrypt(DecryptRequest {
+                file: full.bytes,
+                my_public_key: me.public_key,
+                my_secret_key: me.secret_key,
+                passphrase: None,
+                session_keys: vec![vec![0]],
+            }),
+            Err(PolyError::InvalidKey { .. })
+        ));
+    }
+
+    #[test]
     fn errors_map() {
         let mut bytes = encrypt(EncryptRequest {
             message: "x".into(),
@@ -563,6 +652,7 @@ mod tests {
             algorithm: Algorithm::Fake,
             carrier: CarrierKind::RawDebug,
             options: CarrierOptions::default(),
+            session_key: None,
         })
         .unwrap()
         .bytes;
