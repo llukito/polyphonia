@@ -1557,6 +1557,7 @@ dependencies = [
 name = "poly-ffi"
 version = "0.1.0"
 dependencies = [
+ "poly-ai",
  "poly-engine",
  "thiserror",
  "uniffi",

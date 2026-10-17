@@ -28,6 +28,11 @@ enum RingLayout {
   static let compactAccessoryY: CGFloat = centerY + outerRadius + hoverLift + padding
   static let expandedAccessoryY: CGFloat = centerY + branchOuterRadius + hoverLift + padding
   static let optionsWidth: CGFloat = 302
+  // Preserve the controls' width and add a twelve-point scrollable gutter on both sides.
+  static var accessoryPanelWidth: CGFloat { optionsWidth + padding * 2 }
+  // Drafts stay compact in the accessory list; review editors allow a longer side-by-side check.
+  static let draftEditorHeight: CGFloat = 76
+  static let reviewEditorHeight: CGFloat = 120
   // Keep expanded Other explanations and hidden-mode fields inside the overlay; excess content scrolls.
   static func accessoryY(isSealExpanded: Bool) -> CGFloat {
     isSealExpanded ? expandedAccessoryY : compactAccessoryY
@@ -107,6 +112,8 @@ enum RingMotion {
 
 /// White edges and desaturated blue accents sit over live macOS glass.
 enum RingColor {
+  // An opaque dark surface gives the accessory panel a continuous visible scroll area.
+  static let panelBackground = Color(white: 0.10)
   static let ink = Color.white.opacity(0.94)
   static let secondary = Color.white.opacity(0.60)
   static let faint = Color.white.opacity(0.32)

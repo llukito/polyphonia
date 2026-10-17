@@ -30,8 +30,35 @@ private func carrierSummary(_ carrier: CarrierKind, byteCount: Int) -> String {
 }
 
 /// Small boundary between SwiftUI and the generated Rust API.
-final class PolyphoniaService: @unchecked Sendable {
+protocol PolyphoniaBackend: Sendable {
+  func detectAiServers() -> [AiServer]
+  func shorten(message: String, server: AiServer, model: String) throws -> AiShortenSuggestion
+  func generateDecoy(message: String, server: AiServer, model: String) throws -> AiDecoySuggestion
+  func demoIdentity() throws -> DemoIdentity
+  func seal(
+    message: String, recipientPublicKey: Data, decoy: String?, passphrase: String?,
+    carrier: CarrierKind, coverImage: Data?, coverAudio: Data?
+  ) throws -> SealedCarrier
+  func open(file: Data, passphrase: String?) throws -> OpenedMessage
+}
+
+final class PolyphoniaService: PolyphoniaBackend, @unchecked Sendable {
   private let identityStore = KeychainIdentityStore()
+
+  func detectAiServers() -> [AiServer] { aiDetectServers() }
+
+  func shorten(message: String, server: AiServer, model: String) throws -> AiShortenSuggestion {
+    try aiShorten(server: server, model: model, text: message)
+  }
+
+  func generateDecoy(message: String, server: AiServer, model: String) throws
+    -> AiDecoySuggestion
+  {
+    try aiGenerateDecoy(
+      server: server, model: model,
+      targetTextLenBytes: UInt64(message.utf8.count),
+      script: aiDetectScript(text: message), tone: nil)
+  }
 
   func demoIdentity() throws -> DemoIdentity {
     if let saved = try identityStore.load() { return saved }
@@ -44,7 +71,7 @@ final class PolyphoniaService: @unchecked Sendable {
 
   func seal(
     message: String, recipientPublicKey: Data, decoy: String?, passphrase: String?,
-    carrier: CarrierKind, coverImage: Data? = nil
+    carrier: CarrierKind, coverImage: Data? = nil, coverAudio: Data? = nil
   ) throws
     -> SealedCarrier
   {
@@ -57,7 +84,9 @@ final class PolyphoniaService: @unchecked Sendable {
         // Keep the existing demo identity until real encryption and contact migration are ready.
         algorithm: .fake,
         carrier: carrier,
-        options: CarrierOptions(coverImage: carrier == .stealthPng ? coverImage : nil)
+        options: CarrierOptions(
+          coverImage: carrier == .stealthPng ? coverImage : nil,
+          coverAudio: carrier == .musicWav ? coverAudio : nil)
       ))
     let fileURL = FileManager.default.temporaryDirectory
       .appendingPathComponent("Polyphonia-\(UUID().uuidString)")

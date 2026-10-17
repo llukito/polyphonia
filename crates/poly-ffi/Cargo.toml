@@ -21,5 +21,6 @@ required-features = ["bindgen"]
 
 [dependencies]
 poly-engine.workspace = true
+poly-ai.workspace = true
 uniffi.workspace = true
 thiserror.workspace = true

@@ -18,6 +18,12 @@ final class MessageSession: ObservableObject {
   @Published var hiddenMode = false
   @Published var audioFormat: AudioFormat = .wav
   @Published private(set) var imageCover: ImageCover?
+  @Published private(set) var audioCover: AudioCover?
+  @Published private(set) var aiServers: [AiServer] = []
+  @Published var selectedAiServerURL: String?
+  @Published var selectedAiModel: String?
+  @Published private(set) var aiReview: AiReview?
+  @Published private(set) var isAiWorking = false
   @Published var isWorking = false
   @Published var statusMessage: String?
   @Published private(set) var resultText: String?
@@ -29,12 +35,20 @@ final class MessageSession: ObservableObject {
   @Published var selectedContactID: UUID?
   let platformSelection = PlatformSelection()
 
-  private let service: PolyphoniaService
-  private let contactStore = ContactStore()
+  private let service: any PolyphoniaBackend
+  private let contactStore: ContactStore
+  private let pasteboard: NSPasteboard
   private var generatedFileURL: URL?
+  private var aiDiscoveryID = UUID()
+  private var aiRequestID: UUID?
 
-  init(service: PolyphoniaService) {
+  init(
+    service: any PolyphoniaBackend, defaults: UserDefaults = .standard,
+    pasteboard: NSPasteboard = .general
+  ) {
     self.service = service
+    contactStore = ContactStore(defaults: defaults)
+    self.pasteboard = pasteboard
     do {
       contacts = try contactStore.load()
       let identity = try service.demoIdentity()
@@ -64,10 +78,129 @@ final class MessageSession: ObservableObject {
     resultText = nil
     fileSummary = nil
     imageCover = nil
+    audioCover = nil
+    aiReview = nil
+    cancelAiRequest()
+    discoverAiServers()
     screen = .home
   }
 
+  var selectedAiServer: AiServer? {
+    aiServers.first(where: { $0.baseUrl == selectedAiServerURL })
+  }
+
+  func discoverAiServers() {
+    let discoveryID = UUID()
+    aiDiscoveryID = discoveryID
+    let backend = service
+    Task {
+      let servers = await Task.detached(priority: .utility) {
+        backend.detectAiServers()
+      }.value
+      guard aiDiscoveryID == discoveryID else { return }
+      aiServers = servers.filter { !$0.models.isEmpty }
+      if !aiServers.contains(where: { $0.baseUrl == selectedAiServerURL }) {
+        selectedAiServerURL = aiServers.first?.baseUrl
+      }
+      if selectedAiServer?.models.contains(selectedAiModel ?? "") != true {
+        selectedAiModel = selectedAiServer?.models.first
+      }
+    }
+  }
+
+  func requestShortening() { requestAiSuggestion(kind: .shorten) }
+  func requestDecoy() { requestAiSuggestion(kind: .decoy) }
+
+  private func requestAiSuggestion(kind: AiReview.Kind) {
+    guard screen == .home, !isWorking, !isAiWorking, aiReview == nil,
+      let server = selectedAiServer, let model = selectedAiModel,
+      server.models.contains(model)
+    else { return }
+    let source = message
+    let currentDecoy = decoy
+    guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      statusMessage = "Select a message before asking the local model."
+      return
+    }
+    let requestID = UUID()
+    aiRequestID = requestID
+    isAiWorking = true
+    statusMessage = nil
+    let backend = service
+    Task {
+      do {
+        let review = try await Task.detached(priority: .userInitiated) {
+          if kind == .shorten {
+            let result = try backend.shorten(message: source, server: server, model: model)
+            return AiReview(
+              kind: .shorten, sourceMessage: source, original: source, suggestion: result.text,
+              allowedBytes: nil)
+          }
+          let result = try backend.generateDecoy(message: source, server: server, model: model)
+          return AiReview(
+            kind: .decoy, sourceMessage: source, original: currentDecoy, suggestion: result.text,
+            allowedBytes: Int(result.minBytes)...Int(result.maxBytes))
+        }.value
+        guard aiRequestID == requestID else { return }
+        if message == source, kind == .shorten || decoy == currentDecoy {
+          aiReview = review
+        } else {
+          statusMessage = "The draft changed while AI was working. Try again with the current text."
+        }
+      } catch {
+        guard aiRequestID == requestID else { return }
+        if case AiFfiError.Rejected = error {
+          statusMessage =
+            "The local model could not keep the required facts. Try again or edit the text yourself."
+        } else {
+          statusMessage = "Local AI could not finish: \(error.localizedDescription)"
+        }
+      }
+      guard aiRequestID == requestID else { return }
+      aiRequestID = nil
+      isAiWorking = false
+    }
+  }
+
+  func cancelAiRequest() {
+    aiRequestID = nil
+    isAiWorking = false
+  }
+
+  func discardAiReview() { aiReview = nil }
+
+  @discardableResult
+  func applyAiReview(_ review: AiReview, text: String) -> Bool {
+    guard aiReview?.id == review.id else { return false }
+    guard message == review.sourceMessage,
+      review.kind != .decoy || decoy == review.original
+    else {
+      aiReview = nil
+      statusMessage = "The draft changed. Generate a new suggestion for the current text."
+      return false
+    }
+    guard review.validationMessage(for: text) == nil else { return false }
+    switch review.kind {
+    case .shorten: message = text
+    case .decoy:
+      decoy = text
+      hiddenMode = true
+    }
+    self.aiReview = nil
+    statusMessage =
+      review.kind == .shorten
+      ? "Shorter message applied. Seal → Image or Audio will use this text."
+      : passphrase.isEmpty
+        ? "Decoy applied. Add an agreed passphrase, then choose Seal → Image or Audio."
+        : "Decoy applied. Choose Seal → Image or Audio when ready."
+    return true
+  }
+
   func show(_ screen: Screen) {
+    if screen != .home {
+      cancelAiRequest()
+      discardAiReview()
+    }
     statusMessage = nil
     resendGuide = nil
     self.screen = screen
@@ -95,14 +228,43 @@ final class MessageSession: ObservableObject {
     statusMessage = nil
   }
 
+  func selectAudioCover(fileURL: URL) {
+    guard !isWorking else { return }
+    isWorking = true
+    statusMessage = nil
+    Task {
+      defer { isWorking = false }
+      do {
+        audioCover = try await Task.detached(priority: .userInitiated) {
+          try AudioCover.read(from: fileURL)
+        }.value
+      } catch {
+        statusMessage = "Could not read that cover audio. Choose another WAV."
+      }
+    }
+  }
+
+  func removeAudioCover() {
+    guard !isWorking else { return }
+    audioCover = nil
+    statusMessage = nil
+  }
+
   func sealAndCopy(as medium: SealMedium) {
     guard !isWorking else { return }
+    guard !isAiWorking, aiReview == nil else {
+      statusMessage =
+        isAiWorking
+        ? "Wait for local AI or cancel it before sealing."
+        : "Use or discard the AI suggestion before sealing."
+      return
+    }
     guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       statusMessage = selectionIssue?.message ?? "Select text in your chat, then press ⌘⇧P again."
       return
     }
     guard !hiddenMode || (!decoy.isEmpty && !passphrase.isEmpty) else {
-      statusMessage = "Hidden mode needs a decoy message and passphrase."
+      statusMessage = "Enter a decoy message and an agreed passphrase in Decoy settings before sealing."
       return
     }
     guard let contact = selectedContact else {
@@ -130,6 +292,7 @@ final class MessageSession: ObservableObject {
     let hiddenPassphrase = hiddenMode ? passphrase : nil
     let recipientPublicKey = contact.publicKey
     let coverBytes = selectedCarrier == .stealthPng ? imageCover?.bytes : nil
+    let coverAudioBytes = selectedCarrier == .musicWav ? audioCover?.bytes : nil
     let backend = service
     statusMessage = nil
     resendGuide = nil
@@ -141,12 +304,12 @@ final class MessageSession: ObservableObject {
           try backend.seal(
             message: realMessage, recipientPublicKey: recipientPublicKey,
             decoy: decoyMessage, passphrase: hiddenPassphrase, carrier: selectedCarrier,
-            coverImage: coverBytes)
+            coverImage: coverBytes, coverAudio: coverAudioBytes)
         }.value
         let fileURL = carrier.fileURL
 
-        NSPasteboard.general.clearContents()
-        guard NSPasteboard.general.writeObjects([fileURL as NSURL]) else {
+        pasteboard.clearContents()
+        guard pasteboard.writeObjects([fileURL as NSURL]) else {
           try? FileManager.default.removeItem(at: fileURL)
           throw MessageActionError.clipboardWriteFailed
         }
@@ -167,8 +330,14 @@ final class MessageSession: ObservableObject {
       } catch PolyError.NotImplemented {
         statusMessage = "\(medium.title) sealing is not available in the current backend yet."
       } catch {
-        statusMessage = FriendlyError.message(
-          for: error, sealing: true, usingCover: coverBytes != nil)
+        if case PolyError.CarrierTooSmall = error, !aiServers.isEmpty {
+          statusMessage =
+            "Message too large. Use Local AI to shorten it, choose a larger cover, or remove the cover."
+        } else {
+          statusMessage = FriendlyError.message(
+            for: error, sealing: true,
+            usingCover: coverBytes != nil ? .image : (coverAudioBytes != nil ? .audio : nil))
+        }
       }
       isWorking = false
     }
@@ -247,7 +416,7 @@ final class MessageSession: ObservableObject {
   }
 
   func pasteReceivedFile() {
-    let objects = NSPasteboard.general.readObjects(
+    let objects = pasteboard.readObjects(
       forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
     guard let fileURL = (objects as? [URL])?.first else {
       statusMessage = "Copy a received file first, or choose Browse."
@@ -273,8 +442,8 @@ final class MessageSession: ObservableObject {
 
   func copyOpenedText() {
     guard let resultText else { return }
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(resultText, forType: .string)
+    pasteboard.clearContents()
+    pasteboard.setString(resultText, forType: .string)
     statusMessage = "Text copied."
   }
 
@@ -323,15 +492,16 @@ struct DemoContact: Identifiable, Codable, Hashable, Sendable {
 
 private struct ContactStore {
   private let storageKey = "polyphonia.demo.contacts.v1"
+  let defaults: UserDefaults
 
   func load() throws -> [DemoContact] {
-    guard let data = UserDefaults.standard.data(forKey: storageKey) else { return [] }
+    guard let data = defaults.data(forKey: storageKey) else { return [] }
     return try JSONDecoder().decode([DemoContact].self, from: data)
   }
 
   func save(_ contacts: [DemoContact]) throws {
     let data = try JSONEncoder().encode(contacts)
-    UserDefaults.standard.set(data, forKey: storageKey)
+    defaults.set(data, forKey: storageKey)
   }
 }
 
@@ -362,7 +532,9 @@ extension Data {
 }
 
 private enum FriendlyError {
-  static func message(for error: Error, sealing: Bool = false, usingCover: Bool = false) -> String {
+  static func message(
+    for error: Error, sealing: Bool = false, usingCover: SealMedium? = nil
+  ) -> String {
     guard let coreError = error as? PolyError else {
       if error is CocoaError { return "The file could not be read or saved." }
       return "Polyphonia could not finish that action. Please try again."
@@ -381,15 +553,21 @@ private enum FriendlyError {
       return "That demo option is not ready yet: \(what)"
     case .CarrierTooSmall(let needed, let available):
       return "This carrier fits \(available) bytes, but the message envelope needs \(needed). "
-        + (usingCover
+        + (usingCover == .image
           ? "Choose a larger image, remove the cover, or shorten the message."
-          : "Try a shorter message or Stealth PNG.")
+          : usingCover == .audio
+            ? "Choose a longer WAV, remove the cover, or shorten the message."
+            : "Try a shorter message or Stealth PNG.")
     case .MessageTooLong:
-      return "This message is too long. Select a shorter message and try again."
+      return "This message is too long. Shorten the message below and try again."
     case .Carrier where sealing:
-      return usingCover
-        ? "Could not use this cover image. Choose another PNG or JPEG."
-        : "Could not generate this carrier. Try a shorter message or another format."
+      if usingCover == .image {
+        return "Could not use this cover image. Choose another PNG or JPEG."
+      }
+      if usingCover == .audio {
+        return "Could not use this cover audio. Choose a 16-bit PCM WAV."
+      }
+      return "Could not generate this carrier. Try a shorter message or another format."
     default:
       return sealing
         ? "Polyphonia could not create this carrier. Please try again."

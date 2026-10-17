@@ -8,9 +8,11 @@ struct RingOverlayView: View {
   let onBrowse: () -> Void
   let onImportContact: () -> Void
   let onChooseCover: () -> Void
+  let onChooseAudioCover: () -> Void
 
   @State private var accessoryContentHeight = RingLayout.fieldHeight
   @State private var isSealExpanded = false
+  @State private var accessoryScrollRequest: AccessoryScrollRequest?
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
@@ -21,7 +23,8 @@ struct RingOverlayView: View {
 
       RingMenu(
         leading: actions.leading, trailing: actions.trailing,
-        isPresented: presentation.isPresented, isWorking: session.isWorking,
+        isPresented: presentation.isPresented,
+        isWorking: session.isWorking || session.isAiWorking || session.aiReview != nil,
         releaseRequest: presentation.releaseRequest,
         onExpansionChanged: { isSealExpanded = $0 },
         onAction: perform
@@ -35,6 +38,7 @@ struct RingOverlayView: View {
 
       AccessoryScrollView(
         contentWidth: RingLayout.optionsWidth,
+        scrollRequest: accessoryScrollRequest,
         onContentHeightChange: { height in
           accessoryContentHeight = height
           presentation.accessoryHeight = height
@@ -43,10 +47,16 @@ struct RingOverlayView: View {
         accessories
       }
       .frame(
-        width: RingLayout.optionsWidth,
+        width: RingLayout.accessoryPanelWidth,
         height: min(
           accessoryContentHeight, RingLayout.maximumAccessoryHeight(isSealExpanded: isSealExpanded))
       )
+      .clipShape(RoundedRectangle(cornerRadius: RingLayout.capsuleRadius))
+      .overlay {
+        RoundedRectangle(cornerRadius: RingLayout.capsuleRadius)
+          .strokeBorder(RingColor.edge, lineWidth: RingLayout.hairline)
+          .allowsHitTesting(false)
+      }
       .padding(.top, RingLayout.accessoryY(isSealExpanded: isSealExpanded))
       .opacity(presentation.isPresented ? 1 : 0)
       .offset(y: presentation.isPresented || reduceMotion ? 0 : RingLayout.gap)
@@ -56,12 +66,30 @@ struct RingOverlayView: View {
     .preferredColorScheme(.dark)
     .animation(reduceMotion ? RingMotion.reduced : RingMotion.change, value: session.screen)
     .animation(reduceMotion ? RingMotion.reduced : RingMotion.change, value: session.hiddenMode)
+    .onChange(of: session.aiReview?.id) { _, reviewID in
+      if reviewID != nil { reveal(.aiReview) }
+    }
+    .onChange(of: session.isAiWorking) { _, working in
+      if working {
+        reveal(.aiTools)
+      } else if session.aiReview == nil, session.statusMessage != nil {
+        reveal(.status)
+      }
+    }
+    .onChange(of: session.isWorking) { _, working in
+      if !working, session.statusMessage != nil { reveal(.status) }
+    }
+    .onChange(of: session.screen) { _, _ in reveal(.status) }
     .dropDestination(for: URL.self) { files, _ in
       guard let file = files.first, !session.isWorking else { return false }
       session.open(fileURL: file)
       return true
     }
     .accessibilityHidden(!presentation.isPresented)
+  }
+
+  private func reveal(_ target: AccessoryTarget) {
+    accessoryScrollRequest = AccessoryScrollRequest(target: target)
   }
 
   private var actions: (leading: RingAction, trailing: RingAction) {
@@ -93,9 +121,14 @@ struct RingOverlayView: View {
   @ViewBuilder
   private func hub(hovered: RingAction?) -> some View {
     VStack(spacing: RingLayout.gap) {
-      if session.isWorking {
+      if session.isWorking || session.isAiWorking {
         ProgressView().controlSize(.small)
-        Text("Working…").font(.system(size: RingLayout.captionSize))
+        Text(session.isAiWorking ? "Asking local AI…" : "Working…")
+          .font(.system(size: RingLayout.captionSize))
+      } else if session.aiReview != nil {
+        Image(systemName: "sparkles")
+        Text("Review suggestion below")
+          .font(.system(size: RingLayout.captionSize))
       } else {
         switch session.screen {
         case .home:
@@ -175,40 +208,54 @@ struct RingOverlayView: View {
 
   private var accessories: some View {
     VStack(spacing: RingLayout.gap) {
+      if let status = session.statusMessage {
+        Text(status)
+          .font(.system(size: RingLayout.captionSize))
+          .foregroundStyle(RingColor.ink)
+          .multilineTextAlignment(.center)
+          .padding(RingLayout.gap)
+          .background { accessoryGlass }
+          .accessoryTarget(.status)
+      }
       switch session.screen {
       case .home:
         HStack(spacing: RingLayout.padding) {
           contactMenu
           Button {
-            session.hiddenMode.toggle()
+            reveal(.decoySettings)
           } label: {
-            Label("Hidden", systemImage: session.hiddenMode ? "eye.slash.fill" : "eye.slash")
+            Label("Decoy", systemImage: session.hiddenMode ? "eye.slash.fill" : "eye.slash")
               .foregroundStyle(session.hiddenMode ? RingColor.seal : RingColor.secondary)
           }
           .buttonStyle(.plain)
-          .help("Configure a decoy and passphrase")
+          .help("Learn about decoys and configure a decoy message and passphrase")
+          .accessibilityLabel("Decoy settings")
         }
         .font(.system(size: RingLayout.captionSize))
         .padding(.horizontal, RingLayout.padding)
         .frame(height: RingLayout.fieldHeight)
         .background { accessoryGlass }
 
+        MessageDraftControls(session: session, onReveal: reveal)
+
         PlatformControls(selection: session.platformSelection)
         ImageCoverControls(
           selection: session.platformSelection, coverName: session.imageCover?.name,
           onChoose: onChooseCover, onRemove: session.removeImageCover)
         AudioFormatPicker(selection: $session.audioFormat)
+        AudioCoverControls(
+          format: session.audioFormat, coverName: session.audioCover?.name,
+          onChoose: onChooseAudioCover, onRemove: session.removeAudioCover)
 
-        if session.hiddenMode {
-          TextField("Decoy message", text: $session.decoy)
-            .textFieldStyle(RingFieldStyle())
-          SecureField("Agreed passphrase", text: $session.passphrase)
-            .textFieldStyle(RingFieldStyle())
-        }
       case .open:
         PlatformPicker(selection: session.platformSelection)
         SecureField("Passphrase · optional", text: $session.passphrase)
           .textFieldStyle(RingFieldStyle())
+        Text(
+          "If the sender used a decoy, enter the agreed passphrase to read the real message. Leave it empty to read the decoy."
+        )
+        .font(.system(size: RingLayout.captionSize))
+        .foregroundStyle(RingColor.secondary)
         Button("Back to Seal / Open") { session.show(.home) }
           .buttonStyle(.plain)
           .font(.system(size: RingLayout.captionSize))
@@ -224,16 +271,6 @@ struct RingOverlayView: View {
         if let guide = session.sendingGuide {
           SendingGuideButton(guide: guide, showOnAppear: true)
         }
-      }
-
-      if let status = session.statusMessage {
-        Text(status)
-          .font(.system(size: RingLayout.captionSize))
-          .foregroundStyle(RingColor.ink)
-          .multilineTextAlignment(.center)
-          .padding(RingLayout.gap)
-          .background { accessoryGlass }
-          .transition(.opacity)
       }
 
       if let guide = session.resendGuide {
@@ -295,7 +332,7 @@ struct RingOverlayView: View {
   }
 }
 
-private struct RingFieldStyle: TextFieldStyle {
+struct RingFieldStyle: TextFieldStyle {
   func _body(configuration: TextField<Self._Label>) -> some View {
     configuration
       .font(.system(size: RingLayout.captionSize))

@@ -60,6 +60,15 @@ the cover and the **×** restores the generated image. The choice lasts for the
 current ring session. If the image is too small, choose a larger one or remove it.
 Robust always generates its own grid, so the cover picker is disabled in that mode.
 
+For your own music, select **WAV**, then **Choose…** in the audio-cover row.
+Pick a 16-bit PCM WAV, then use **Seal → Audio**. Rust embeds the message in a
+new WAV while preserving the cover's length, sample rate, and channel count;
+the original is never overwritten. **Replace…** changes the cover and **×**
+restores generated music. The choice lasts for the current ring session. MIDI
+always generates its own music, so the cover picker is disabled in that format.
+If the WAV is too short, choose a longer one or shorten the message. Other WAV
+encodings must be converted to 16-bit PCM before using them as a cover.
+
 ## Destination platform and image mode
 
 The glass selector below the ring suggests the app where the text was selected.
@@ -81,11 +90,39 @@ The app bundles the canonical `profiles/platforms.json` from the repository:
   and opens that platform's Stealth steps for resending as a file/document.
 
 The controls sit close to the main ring and move down while the Image/Audio layer
-is open. They scroll when the optional explanations and hidden-mode fields exceed
-the space below the ring, including when the pointer is over a transparent gap.
+is open. A solid background marks the whole scrollable panel. Its padding, headings,
+and gaps between controls scroll along with the inputs when the content exceeds
+the space below the ring.
 App detection does not use browser history, inspect other
 tabs, or request Automation permission. No selected text, keys, passphrases or URLs
 are logged.
+
+## Local AI and editable drafts
+
+The original two-layer ring uses scrollable controls below it. **Message to seal**
+shows the selected text and lets you edit it before choosing **Seal → Image** or
+**Seal → Audio**. Those actions encode the current field, including accepted AI edits.
+
+When LM Studio or Ollama has a model available, **Local AI** appears in the controls:
+
+1. Choose the local server and model, then **Shorten message**.
+2. Compare the inline suggestion with the current message and edit it if needed.
+3. Choose **Use as message**. The suggestion replaces **Message to seal** and the
+   controls return to that field. **Discard** keeps the current message.
+4. Choose **Seal → Image** or **Seal → Audio** to encode the accepted text.
+
+Choose **Decoy** next to the recipient to jump to **Decoy message**, then enable
+**Use a decoy**. Write harmless text yourself or choose **Generate decoy with local AI**.
+Review an AI suggestion and its permitted byte range, then choose **Use as decoy**.
+Add a passphrase agreed with the recipient before sealing. Without the correct
+passphrase, the recipient sees the decoy. With it, they see **Message to seal**.
+Opening a normal file does not require a passphrase.
+
+Sealing waits until you use or discard a pending suggestion. **Cancel** ignores a
+pending model response. Leaving Seal or closing the ring also cancels it. Suggestions
+for an outdated draft are discarded. No suggestion is applied or sent automatically.
+
+See [the local AI guide](../docs/ai.md) for LM Studio and Ollama setup.
 
 ## Build
 
@@ -104,6 +141,13 @@ and binding generation are skipped when the compiled library is unchanged.
 Debug builds use the Rust debug profile; Release uses release. Rust must be
 installed, with Cargo available in `CARGO_HOME/bin` or `~/.cargo/bin`.
 
+Run `bash scripts/test-macos-ai-flow.sh` to check AI review, apply, discard, cancel,
+and stale-result handling using deterministic model responses and real PNG/WAV
+round trips. The checks use isolated contacts and pasteboards. Add `--ui` to also
+open a temporary preview, test wheel scrolling over panel gaps and padding, use the
+Decoy controls and inline review buttons, and save layout captures
+to `/private/tmp/polyphonia-restored-*.png`.
+
 ## Try the carriers
 
 1. Run the **polyphonia** scheme in Xcode. Use **This Mac · demo identity** to
@@ -114,7 +158,8 @@ installed, with Cargo available in `CARGO_HOME/bin` or `~/.cargo/bin`.
 4. Invoke the ring again, choose Open → Paste file (or Browse the saved PNG).
    The selected message should appear. Repeat for both image modes.
 5. Choose WAV below the ring, then Seal → Audio. Repeat Open with that file.
-   Repeat with MIDI; its file extension is `.mid`.
+   Choose a 16-bit PCM cover WAV and repeat to hear your own music in the new
+   file. Then repeat with MIDI; its file extension is `.mid`.
 6. For hidden mode, set a decoy and passphrase before sealing. Open without the
    passphrase to see the decoy, then open with the agreed passphrase to see the
    real message. The interface does not label either slot.

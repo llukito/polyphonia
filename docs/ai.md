@@ -181,11 +181,11 @@ cargo run -p poly-ai --bin poly-ai-eval -- try --model <id> "text to shorten"
 `run` prints pass/fail per sample with the failed check names, the average
 bytes saved, the decoy fit rate and the average latency.
 
-## For the Mac app (role 4)
+## Mac app integration
 
-poly-ai has no UniFFI code; role 4 owns `poly-ffi`. Proposed functions to add
-there (UniFFI has no `usize` or tuples, so lengths are `u64` and the range is
-two fields):
+`poly-ai` stays independent of UniFFI. The macOS app calls it through
+`poly-ffi`, which exposes these types and functions (UniFFI lengths are `u64`
+and the decoy range is two fields):
 
 ```rust
 #[derive(uniffi::Enum)]
@@ -224,16 +224,17 @@ pub enum AiFfiError {
 #[uniffi::export] fn ai_detect_script(text: String) -> AiScript;                  // poly_ai::detect_script
 ```
 
-UI rules:
+The app follows these UI rules:
 
-- Hide the AI buttons when `ai_detect_servers()` is empty. Run discovery at
-  launch and when the encrypt screen opens, not on every keystroke.
+- Hide the AI action when `ai_detect_servers()` is empty. Run discovery when a
+  ring session opens, not on every keystroke.
 - **Call every AI function off the main thread** (they block: up to 500 ms for
   discovery, up to 45 s for shorten/decoy). Show a spinner and a Cancel.
-- Show original and suggestion side by side with **Accept / Edit / Cancel**.
-  Never auto-replace and never auto-send.
+- Show original and suggestion side by side in an editable review card with
+  **Use this text / Cancel**. Never auto-replace and never auto-send.
 - Show the bytes saved (`original_bytes → new_bytes`, `saved_percent`).
-- When encrypting fails with `CarrierTooSmall`, offer **Shorten** right there.
+- When encrypting fails with `CarrierTooSmall`, direct the user to the ring's
+  **Local AI** action to shorten the message.
 - Decoy: pass `target_text_len_bytes = real message's UTF-8 byte length` and
   `script = ai_detect_script(real message)`; never pass the message itself.
   If `fits` is false, show the allowed range (`min_bytes`–`max_bytes`) and a

@@ -6,6 +6,7 @@
 
 use std::sync::LazyLock;
 
+use poly_ai::{AiError, LocalServer, Script, ServerKind};
 use poly_engine::{Engine, poly_core};
 
 uniffi::setup_scaffolding!();
@@ -39,6 +40,184 @@ pub enum CarrierKind {
 pub enum Slot {
     A,
     B,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum AiServerKind {
+    LmStudio,
+    Ollama,
+    Custom,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AiServer {
+    pub kind: AiServerKind,
+    pub base_url: String,
+    pub models: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum AiScript {
+    Latin,
+    Georgian,
+    Cyrillic,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct AiShortenSuggestion {
+    pub text: String,
+    pub original_bytes: u64,
+    pub new_bytes: u64,
+    pub saved_percent: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AiDecoySuggestion {
+    pub text: String,
+    pub fits: bool,
+    pub min_bytes: u64,
+    pub max_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
+pub enum AiFfiError {
+    #[error("no local AI server is running")]
+    NoLocalServer,
+    #[error("not a local server URL: {message}")]
+    NotLocal { message: String },
+    #[error("the local AI server took too long to answer")]
+    Timeout,
+    #[error("the local AI server sent an unusable answer")]
+    BadResponse,
+    #[error("the local AI server failed (HTTP status {status})")]
+    ServerFailed { status: u16 },
+    #[error("the local AI server returned an error: {message}")]
+    Server { message: String },
+    #[error("invalid AI request: {message}")]
+    InvalidRequest { message: String },
+    #[error("the suggestion failed its checks: {}", reasons.join(", "))]
+    Rejected { reasons: Vec<String> },
+}
+
+impl From<AiError> for AiFfiError {
+    fn from(error: AiError) -> Self {
+        match error {
+            AiError::NoLocalServer => Self::NoLocalServer,
+            AiError::NotLocal(message) => Self::NotLocal { message },
+            AiError::Timeout => Self::Timeout,
+            AiError::BadResponse => Self::BadResponse,
+            AiError::ServerFailed { status } => Self::ServerFailed { status },
+            AiError::Server(message) => Self::Server { message },
+            AiError::InvalidRequest(message) => Self::InvalidRequest { message },
+            AiError::Rejected { reasons } => Self::Rejected { reasons },
+        }
+    }
+}
+
+impl From<AiServerKind> for ServerKind {
+    fn from(kind: AiServerKind) -> Self {
+        match kind {
+            AiServerKind::LmStudio => Self::LmStudio,
+            AiServerKind::Ollama => Self::Ollama,
+            AiServerKind::Custom => Self::Custom,
+        }
+    }
+}
+
+impl From<ServerKind> for AiServerKind {
+    fn from(kind: ServerKind) -> Self {
+        match kind {
+            ServerKind::LmStudio => Self::LmStudio,
+            ServerKind::Ollama => Self::Ollama,
+            ServerKind::Custom => Self::Custom,
+        }
+    }
+}
+
+impl From<AiScript> for Script {
+    fn from(script: AiScript) -> Self {
+        match script {
+            AiScript::Latin => Self::Latin,
+            AiScript::Georgian => Self::Georgian,
+            AiScript::Cyrillic => Self::Cyrillic,
+            AiScript::Unknown => Self::Unknown,
+        }
+    }
+}
+
+impl From<Script> for AiScript {
+    fn from(script: Script) -> Self {
+        match script {
+            Script::Latin => Self::Latin,
+            Script::Georgian => Self::Georgian,
+            Script::Cyrillic => Self::Cyrillic,
+            Script::Unknown => Self::Unknown,
+        }
+    }
+}
+
+impl From<AiServer> for LocalServer {
+    fn from(server: AiServer) -> Self {
+        Self {
+            kind: server.kind.into(),
+            base_url: server.base_url,
+            models: server.models,
+        }
+    }
+}
+
+#[uniffi::export]
+pub fn ai_detect_servers() -> Vec<AiServer> {
+    poly_ai::detect_servers()
+        .into_iter()
+        .map(|server| AiServer {
+            kind: server.kind.into(),
+            base_url: server.base_url,
+            models: server.models,
+        })
+        .collect()
+}
+
+#[uniffi::export]
+pub fn ai_detect_script(text: String) -> AiScript {
+    poly_ai::detect_script(&text).into()
+}
+
+#[uniffi::export]
+pub fn ai_shorten(
+    server: AiServer,
+    model: String,
+    text: String,
+) -> Result<AiShortenSuggestion, AiFfiError> {
+    let suggestion = poly_ai::shorten(&server.into(), &model, &text)?;
+    Ok(AiShortenSuggestion {
+        text: suggestion.text,
+        original_bytes: suggestion.original_bytes as u64,
+        new_bytes: suggestion.new_bytes as u64,
+        saved_percent: suggestion.saved_percent,
+    })
+}
+
+#[uniffi::export]
+pub fn ai_generate_decoy(
+    server: AiServer,
+    model: String,
+    target_text_len_bytes: u64,
+    script: AiScript,
+    tone: Option<String>,
+) -> Result<AiDecoySuggestion, AiFfiError> {
+    let target =
+        usize::try_from(target_text_len_bytes).map_err(|_| AiFfiError::InvalidRequest {
+            message: "target length out of range".into(),
+        })?;
+    let suggestion = poly_ai::generate_decoy(&server.into(), &model, target, script.into(), tone)?;
+    Ok(AiDecoySuggestion {
+        text: suggestion.text,
+        fits: suggestion.fits,
+        min_bytes: suggestion.allowed_len_range.0 as u64,
+        max_bytes: suggestion.allowed_len_range.1 as u64,
+    })
 }
 
 /// A key pair. Store `secret_key` in the Keychain.
