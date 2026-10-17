@@ -9,6 +9,8 @@ publish.workspace = true
 [dependencies]
 poly-core.workspace = true
 image.workspace = true
+qrcode.workspace = true
+rqrr.workspace = true
 
 [dev-dependencies]
 poly-core = { workspace = true, features = ["test-utils"] }
