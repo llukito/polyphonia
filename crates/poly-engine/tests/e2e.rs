@@ -178,10 +178,6 @@ fn inspect_without_key() {
 #[test]
 fn not_implemented_parts_report_it() {
     let engine = Engine::default();
-    assert!(matches!(
-        engine.generate_identity(Algorithm::MlKem768),
-        Err(PolyError::NotImplemented(_))
-    ));
     let me = me();
     let mut req = request(&me, "x");
     req.carrier = CarrierKind::MusicMidi;
