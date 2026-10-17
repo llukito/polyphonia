@@ -48,13 +48,17 @@ No Rust trait to implement. You use:
    Record: messenger, carrier, send mode, hash same?, `poly inspect` result,
    what changed (format, dimensions, size). Use role 2's `poly damage` to
    reproduce what you find.
-2. **AI (optional, local only):** an LLM through Ollama.
-   - Detect it with `GET http://localhost:11434/api/tags` (11434 is Ollama's
-     default port); if unreachable, hide the AI buttons.
+2. **AI (optional, local only):** a local LLM through LM Studio or Ollama.
+   Built in `crates/poly-ai`; details in `docs/ai.md`.
+   - Detect both with `GET /v1/models` on their OpenAI-compatible APIs:
+     LM Studio at `http://127.0.0.1:1234/v1`, Ollama at
+     `http://127.0.0.1:11434/v1` (their default ports); if neither answers,
+     hide the AI buttons.
    - "Shorten": rewrite the message shorter so the song is shorter.
    - "Generate decoy": a believable harmless message for hidden mode.
-   - **Coordinate with role 4** on where the calls live (Swift in the app is
-     simplest; the Rust core stays free of network code).
+   - Network code lives only in `poly-ai` (loopback only); `poly-core` and
+     `poly-engine` stay network-free. Role 4 exposes it through `poly-ffi`
+     (functions listed in `docs/ai.md`, "For the Mac app").
 3. **Demo + pitch:** the story (hidden mode, post-quantum vs RSA, role 1's
    live "tiny RSA" factoring), the exact click path, and a fallback recording.
 

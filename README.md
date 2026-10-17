@@ -94,7 +94,8 @@ crates/poly-engine   encrypt/decrypt, carrier registry, auto-detect, RawDebug ca
 crates/poly-ffi      UniFFI wrapper for Swift
 crates/poly-cli      the `poly` binary
 crates/poly-platform-check  `platform-check` binary: messenger send tests (role 5)
-profiles/            platforms.json: per-messenger send mode and steps, read by the app
+crates/poly-ai       optional local AI (Shorten, Generate decoy) + `poly-ai-eval` (role 5)
+profiles/            platforms.json (per-messenger send mode and steps), ai-prompts.json (role 5)
 app/                 macOS app (Xcode project, role 4)
 scripts/             build-xcframework.sh
 tests/vectors/       golden files
@@ -109,7 +110,7 @@ docs/                SPEC, contributing guide, one guide per role
 | 2 | image | `poly-image`, the `poly damage` subcommand |
 | 3 | music | `poly-music` |
 | 4 | Mac app | `poly-ffi`, `app/`, `scripts/build-xcframework.sh` |
-| 5 | AI + demo | `poly-platform-check`, `profiles/`, `docs/platform-tests.md`, AI features, demo |
+| 5 | AI + demo | `poly-platform-check`, `poly-ai`, `profiles/`, `docs/platform-tests.md`, `docs/ai.md`, `tests/ai-samples.json`, AI features, demo |
 
 `poly-core`, `poly-engine` and `docs/SPEC.md` change only through a PR the lead approves.
 

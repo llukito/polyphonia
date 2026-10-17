@@ -14,7 +14,7 @@ or a WAV/MIDI song. Rust workspace (`crates/`) + Swift macOS app (`app/`) via Un
 | `crates/poly-image`, the `poly damage` subcommand | role 2 |
 | `crates/poly-music` | role 3 |
 | `crates/poly-ffi`, `app/`, `scripts/build-xcframework.sh` | role 4 |
-| `crates/poly-platform-check`, `profiles/`, `docs/platform-tests.md`, AI features, demo | role 5 |
+| `crates/poly-platform-check`, `crates/poly-ai`, `profiles/`, `docs/platform-tests.md`, `docs/ai.md`, `tests/ai-samples.json`, AI features, demo | role 5 |
 
 ## Rules
 - Edit only files you own. Need a change in poly-core, poly-engine or SPEC.md?
