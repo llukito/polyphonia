@@ -19,6 +19,9 @@ or a WAV/MIDI song. Rust workspace (`crates/`) + Swift macOS app (`app/`) via Un
 ## Rules
 - Edit only files you own. Need a change in poly-core, poly-engine or SPEC.md?
   Stop and write the proposed change for the lead instead of making it.
+- Exception: when you finish a stub, you may delete the matching
+  `NotImplemented` assertion in poly-engine's e2e tests in the same PR. Any
+  other poly-engine change still needs the lead's approval.
 - Never change the envelope or payload format silently.
 - Before every commit: `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`
   and `cargo test --workspace` must pass.
