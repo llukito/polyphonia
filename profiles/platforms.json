@@ -30,11 +30,10 @@
     {
       "id": "whatsapp",
       "name": "WhatsApp",
-      "lossless_file_mode": false,
-      "default_mode": "robust",
+      "lossless_file_mode": true,
+      "default_mode": "stealth",
       "steps": {
         "stealth": [
-          "Not confirmed to keep the file unchanged. If you try it anyway:",
           "Open the chat in WhatsApp on your Mac.",
           "Click the attach button and choose Document.",
           "Select the Polyphonia image and send it.",
@@ -46,11 +45,13 @@
           "Select the Polyphonia image and send it as a normal photo."
         ]
       },
-      "notes": "Unconfirmed: the official help center pages could not be read during the 2026-10-17 re-check, so no official statement that documents arrive unchanged was found. Blogs say sending as a Document keeps the original, up to 2 GB; normal and HD photos are both compressed. Strong candidate for our own send test.",
+      "notes": "Strong evidence, not tested. WhatsApp's official help pages block automated tools. Evidence: WhatsApp's own update changelog (v23.24.73, quoted by Tom's Guide) says original-quality media can be sent as a file via + > Document > Choose photo or video; reports since 2023 consistently say Document keeps the original, up to 2 GB, while normal and HD photos are compressed. Official limits recorded earlier: 2 GB from WhatsApp Desktop/Web, 100 MB from Android.",
       "sources": [
+        "https://www.tomsguide.com/news/whatsapp-update-marks-a-big-change-for-iphone-users-heres-what-to-expect",
+        "https://lowyat.net/2023/312184/whatsapp-uncompressed-original-quality",
+        "https://m.gsmarena.com/whatsapp_for_ios_adds_option_to_send_uncompressed_images_and_videos-news-60812.php",
         "https://faq.whatsapp.com/453914586839706/?cms_platform=windows-desktop",
-        "https://www.igeeksblog.com/send-photos-as-documents-in-whatsapp-on-iphone/",
-        "https://smartprix.com/bytes/whatsapp-hd-photo-sharing-documents-vs-images-which-method-should-you-use/"
+        "https://faq.whatsapp.com/164676891531296/?locale=en_US"
       ],
       "verified": { "status": "research", "date": null }
     },

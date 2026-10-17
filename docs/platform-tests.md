@@ -30,12 +30,14 @@ Every entry starts as `"verified": { "status": "research" }`. It becomes
 
 Rule: `lossless_file_mode` is true only when the platform's own help center or
 docs clearly say files are sent unchanged, or a real send test below proved it.
+Exception: WhatsApp, whose help pages block automated tools, is true on its
+own changelog as quoted by the press (see its row).
 Otherwise it is false (robust) and marked "unconfirmed". Re-checked 2026-10-17.
 
 | Platform | Lossless file mode | Default | Confidence | Summary |
 |---|---|---|---|---|
 | Telegram | yes | stealth | verified by test | Sent as a file ("Send File" dialog, as-is) the PNG arrived identical; "Send as media" converted it to JPEG (-75%), same 512×512. Files up to 2 GB (4 GB Premium). |
-| WhatsApp | no | robust | unconfirmed | Blogs say Document keeps the original (2 GB); official pages unreadable. Normal and HD photos are compressed. Test candidate. |
+| WhatsApp | yes | stealth | strong evidence, not tested | WhatsApp's own changelog (v23.24.73, quoted by Tom's Guide): + > Document > Choose photo or video sends original quality. Document keeps the original (2 GB Desktop/Web, 100 MB Android); normal and HD photos are compressed. Help pages block automated tools. Test candidate. |
 | Signal | no | robust | unconfirmed | Third parties say files skip compression (100 MB); no official statement. Test candidate. |
 | Discord | no | robust | unconfirmed | Official FAQ: 20 MB free (since Aug 2026), 50 MB Nitro Basic, 1 GB Nitro; mentions compression, never says originals are kept. Test candidate. |
 | Instagram | no | robust | unconfirmed | No file/document attachment in DMs; photos compressed (HD too). |
@@ -196,6 +198,14 @@ The app (role 4) reads `profiles/platforms.json` and bundles it as a resource.
 **Rule:** `default_mode` is `"stealth"` when `lossless_file_mode` is true,
 otherwise `"robust"`. "Other" has no default; the user chooses, with the
 `explain` texts shown next to each option.
+
+The profile only sets the default mode. The user can always switch between
+stealth and robust by hand, for any platform.
+
+A wrong stealth default is safe. If the platform compresses the image anyway,
+the receiver's envelope checksum detects the damage (`ChecksumMismatch`)
+instead of returning wrong text, the app asks the sender to resend it as a
+file or document, and the sender can switch to robust if that still fails.
 
 Suggested UI: the encrypt screen picks the contact's platform, preselects
 `default_mode`, and shows that mode's `steps`. If `verified.status` is
