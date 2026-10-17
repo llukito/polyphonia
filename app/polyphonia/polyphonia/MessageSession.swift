@@ -16,9 +16,11 @@ final class MessageSession: ObservableObject {
   @Published var decoy = ""
   @Published var passphrase = ""
   @Published var hiddenMode = false
+  @Published var audioFormat: AudioFormat = .wav
   @Published var isWorking = false
   @Published var statusMessage: String?
   @Published private(set) var resultText: String?
+  @Published private(set) var fileSummary: String?
   @Published private(set) var selectionIssue: SelectionIssue?
   @Published private(set) var sendingGuide: SendingGuide?
   @Published private(set) var resendGuide: SendingGuide?
@@ -59,6 +61,7 @@ final class MessageSession: ObservableObject {
     hiddenMode = false
     statusMessage = selection.issue?.message
     resultText = nil
+    fileSummary = nil
     screen = .home
   }
 
@@ -86,7 +89,10 @@ final class MessageSession: ObservableObject {
       statusMessage = loadError
       return
     }
-    guard let selectedCarrier = medium.carrier(imageMode: platformSelection.imageMode) else {
+    guard
+      let selectedCarrier = medium.carrier(
+        imageMode: platformSelection.imageMode, audioFormat: audioFormat)
+    else {
       statusMessage =
         "Choose Stealth or Robust below the platform selector before sealing an image."
       return
@@ -111,19 +117,19 @@ final class MessageSession: ObservableObject {
             message: realMessage, recipientPublicKey: recipientPublicKey,
             decoy: decoyMessage, passphrase: hiddenPassphrase, carrier: selectedCarrier)
         }.value
-        let fileURL = FileManager.default.temporaryDirectory
-          .appendingPathComponent("Polyphonia-\(UUID().uuidString)")
-          .appendingPathExtension(carrier.fileExtension)
-        try carrier.bytes.write(to: fileURL, options: .atomic)
+        let fileURL = carrier.fileURL
 
         NSPasteboard.general.clearContents()
         guard NSPasteboard.general.writeObjects([fileURL as NSURL]) else {
+          try? FileManager.default.removeItem(at: fileURL)
           throw MessageActionError.clipboardWriteFailed
         }
         if let previousFile = generatedFileURL {
           try? FileManager.default.removeItem(at: previousFile)
         }
         generatedFileURL = fileURL
+        resultText = nil
+        fileSummary = carrier.summary
         sendingGuide = guide
         passphrase = ""
         decoy = ""
@@ -135,7 +141,7 @@ final class MessageSession: ObservableObject {
       } catch PolyError.NotImplemented {
         statusMessage = "\(medium.title) sealing is not available in the current backend yet."
       } catch {
-        statusMessage = FriendlyError.message(for: error)
+        statusMessage = FriendlyError.message(for: error, sealing: true)
       }
       isWorking = false
     }
@@ -195,10 +201,11 @@ final class MessageSession: ObservableObject {
         let fileData = try await Task.detached(priority: .userInitiated) {
           try Data(contentsOf: fileURL)
         }.value
-        let openedText = try await Task.detached(priority: .userInitiated) {
+        let opened = try await Task.detached(priority: .userInitiated) {
           try backend.open(file: fileData, passphrase: enteredPassphrase)
         }.value
-        resultText = openedText
+        resultText = opened.text
+        fileSummary = opened.summary
         passphrase = ""
         statusMessage = nil
         screen = .result
@@ -231,7 +238,7 @@ final class MessageSession: ObservableObject {
     do {
       let data = try Data(contentsOf: generatedFileURL)
       try data.write(to: destination, options: .atomic)
-      statusMessage = "Saved encrypted file."
+      statusMessage = "Saved carrier file."
     } catch {
       statusMessage = "Could not save the file. Please try again."
     }
@@ -246,6 +253,7 @@ final class MessageSession: ObservableObject {
 
   func closeResult() {
     resultText = nil
+    fileSummary = nil
     sendingGuide = nil
     resendGuide = nil
     passphrase = ""
@@ -327,7 +335,7 @@ extension Data {
 }
 
 private enum FriendlyError {
-  static func message(for error: Error) -> String {
+  static func message(for error: Error, sealing: Bool = false) -> String {
     guard let coreError = error as? PolyError else {
       if error is CocoaError { return "The file could not be read or saved." }
       return "Polyphonia could not finish that action. Please try again."
@@ -344,8 +352,17 @@ private enum FriendlyError {
       return "This file does not contain a Polyphonia message."
     case .NotImplemented(let what):
       return "That demo option is not ready yet: \(what)"
+    case .CarrierTooSmall(let needed, let available):
+      return "This carrier fits \(available) bytes, but the message envelope needs \(needed). "
+        + "Try a shorter message or Stealth PNG."
+    case .MessageTooLong:
+      return "This message is too long. Select a shorter message and try again."
+    case .Carrier where sealing:
+      return "Could not generate this carrier. Try a shorter message or another format."
     default:
-      return "Polyphonia could not open this file. Check the file and try again."
+      return sealing
+        ? "Polyphonia could not create this carrier. Please try again."
+        : "Polyphonia could not open this file. Check the file and try again."
     }
   }
 }
