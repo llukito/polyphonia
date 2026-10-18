@@ -92,12 +92,17 @@ final class RingWindowController {
     removeMonitors()
     let closingTransition = UUID()
     transitionID = closingTransition
-    withAnimation(RingMotion.dismiss) {
+    let animation =
+      NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+      ? RingMotion.reduced
+      : (session.resultText == nil ? RingMotion.dismiss : OpenedMessageLayout.dismiss)
+    withAnimation(animation) {
       presentation.isPresented = false
     } completion: { [weak self] in
       guard let self, self.transitionID == closingTransition else { return }
       let shouldRestoreFocus = restoreFocus && NSApp.isActive
       self.window.orderOut(nil)
+      if self.session.resultText != nil { self.session.closeResult() }
       if shouldRestoreFocus { self.sourceApplication?.activate() }
     }
   }
@@ -112,6 +117,7 @@ final class RingWindowController {
     removeMonitors()
     presentation.isPresented = false
     window.orderOut(nil)
+    if session.resultText != nil { session.closeResult() }
   }
 
   private func browseReceivedFile() {
@@ -180,7 +186,9 @@ final class RingWindowController {
   }
 
   func releaseShortcut() {
-    guard presentation.isPresented, window.isVisible, NSApp.isActive else { return }
+    guard presentation.isPresented, window.isVisible, NSApp.isActive,
+      session.resultText == nil
+    else { return }
     let mouse = NSEvent.mouseLocation
     // AppKit screen coordinates grow upward; SwiftUI's ring coordinates grow downward.
     let point = CGPoint(

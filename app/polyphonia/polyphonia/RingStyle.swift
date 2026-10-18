@@ -77,7 +77,10 @@ enum RingLayout {
   {
     // Fit the visible ring and controls. Transparent canvas margins may extend offscreen.
     let leftMargin = branchOuterRadius + hoverLift + shadowRadius + RingParallax.maximumOffset
-    let rightMargin = outerRadius + hoverLift + shadowRadius + RingParallax.maximumOffset
+    // Reserve room for the reading card too, so decoding at the right edge cannot clip it.
+    let rightMargin = max(
+      outerRadius + hoverLift + shadowRadius + RingParallax.maximumOffset,
+      OpenedMessageLayout.width / 2 + shadowRadius)
     let topMargin = max(
       branchOuterRadius + shadowRadius + RingParallax.maximumOffset,
       centerY - closeY + closeDiameter / 2)

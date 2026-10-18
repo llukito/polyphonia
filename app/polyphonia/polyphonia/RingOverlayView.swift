@@ -23,56 +23,70 @@ struct RingOverlayView: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onDismiss)
 
-      RingMenu(
-        leading: actions.leading, trailing: actions.trailing, isOptionsVisible: isOptionsVisible,
-        isPresented: presentation.isPresented,
-        isWorking: session.isWorking || session.isAiWorking || session.aiReview != nil,
-        releaseRequest: presentation.releaseRequest,
-        onExpansionChanged: { isSealExpanded = $0 },
-        onAction: perform
-      ) { hovered in
-        hub(hovered: hovered)
-      }
-      .position(RingLayout.center)
-
-      closeButton
-        .position(x: RingLayout.center.x, y: RingLayout.closeY)
-
-      AccessoryScrollView(
-        contentWidth: RingLayout.optionsWidth,
-        scrollRequest: accessoryScrollRequest,
-        onContentHeightChange: { height in
-          accessoryContentHeight = height
-          updateAccessoryHeight()
+      if isOpenedMessage, let text = session.resultText {
+        OpenedMessageView(
+          text: text, isPresented: presentation.isPresented,
+          onCopy: session.copyOpenedText, onDismiss: onDismiss
+        )
+        .id(session.openedMessageID)
+        .position(RingLayout.center)
+        .transition(
+          .offset(y: reduceMotion ? 0 : OpenedMessageLayout.slideDistance).combined(with: .opacity))
+      } else {
+        RingMenu(
+          leading: actions.leading, trailing: actions.trailing, isOptionsVisible: isOptionsVisible,
+          isPresented: presentation.isPresented,
+          isWorking: session.isWorking || session.isAiWorking || session.aiReview != nil,
+          releaseRequest: presentation.releaseRequest,
+          onExpansionChanged: { isSealExpanded = $0 },
+          onAction: perform
+        ) { hovered in
+          hub(hovered: hovered)
         }
-      ) {
-        accessories
+        .position(RingLayout.center)
+
+        closeButton
+          .position(x: RingLayout.center.x, y: RingLayout.closeY)
+
+        AccessoryScrollView(
+          contentWidth: RingLayout.optionsWidth,
+          scrollRequest: accessoryScrollRequest,
+          onContentHeightChange: { height in
+            accessoryContentHeight = height
+            updateAccessoryHeight()
+          }
+        ) {
+          accessories
+        }
+        .frame(
+          width: RingLayout.accessoryPanelWidth,
+          height: min(
+            accessoryContentHeight,
+            RingLayout.maximumAccessoryHeight(isSealExpanded: isSealExpanded))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: RingLayout.capsuleRadius))
+        .overlay {
+          RoundedRectangle(cornerRadius: RingLayout.capsuleRadius)
+            .strokeBorder(RingColor.edge, lineWidth: RingLayout.hairline)
+            .allowsHitTesting(false)
+        }
+        .padding(.top, RingLayout.accessoryY(isSealExpanded: isSealExpanded))
+        .opacity(isOptionsVisible ? 1 : 0)
+        .allowsHitTesting(isOptionsVisible)
+        .accessibilityHidden(!isOptionsVisible)
+        .opacity(presentation.isPresented ? 1 : 0)
+        .offset(y: presentation.isPresented || reduceMotion ? 0 : RingLayout.gap)
+        .animation(reduceMotion ? RingMotion.reduced : RingMotion.change, value: isSealExpanded)
+        .animation(reduceMotion ? RingMotion.reduced : RingMotion.change, value: isOptionsVisible)
       }
-      .frame(
-        width: RingLayout.accessoryPanelWidth,
-        height: min(
-          accessoryContentHeight,
-          RingLayout.maximumAccessoryHeight(isSealExpanded: isSealExpanded))
-      )
-      .clipShape(RoundedRectangle(cornerRadius: RingLayout.capsuleRadius))
-      .overlay {
-        RoundedRectangle(cornerRadius: RingLayout.capsuleRadius)
-          .strokeBorder(RingColor.edge, lineWidth: RingLayout.hairline)
-          .allowsHitTesting(false)
-      }
-      .padding(.top, RingLayout.accessoryY(isSealExpanded: isSealExpanded))
-      .opacity(isOptionsVisible ? 1 : 0)
-      .allowsHitTesting(isOptionsVisible)
-      .accessibilityHidden(!isOptionsVisible)
-      .opacity(presentation.isPresented ? 1 : 0)
-      .offset(y: presentation.isPresented || reduceMotion ? 0 : RingLayout.gap)
-      .animation(reduceMotion ? RingMotion.reduced : RingMotion.change, value: isSealExpanded)
-      .animation(reduceMotion ? RingMotion.reduced : RingMotion.change, value: isOptionsVisible)
     }
     .frame(width: RingLayout.canvasWidth, height: RingLayout.canvasHeight)
     .preferredColorScheme(.dark)
     .animation(reduceMotion ? RingMotion.reduced : RingMotion.change, value: session.screen)
     .animation(reduceMotion ? RingMotion.reduced : RingMotion.change, value: session.hiddenMode)
+    .animation(
+      reduceMotion ? RingMotion.reduced : OpenedMessageLayout.motion, value: isOpenedMessage
+    )
     .onChange(of: session.aiReview?.id) { _, reviewID in
       if reviewID != nil { reveal(.aiReview) }
     }
@@ -104,6 +118,10 @@ struct RingOverlayView: View {
       return true
     }
     .accessibilityHidden(!presentation.isPresented)
+  }
+
+  private var isOpenedMessage: Bool {
+    session.screen == .result && session.resultText != nil
   }
 
   private func reveal(_ target: AccessoryTarget) {
@@ -189,18 +207,10 @@ struct RingOverlayView: View {
           Text("Name them below, then Add contact")
             .font(.system(size: RingLayout.tinySize)).foregroundStyle(RingColor.secondary)
         case .result:
-          if let text = session.resultText {
-            Text("OPENED").font(.system(size: RingLayout.tinySize, weight: .medium))
-              .tracking(1).foregroundStyle(RingColor.secondary)
-            ScrollView(showsIndicators: false) {
-              Text(text).font(.system(size: RingLayout.captionSize)).textSelection(.enabled)
-            }
-          } else {
-            Image(systemName: "checkmark").foregroundStyle(RingColor.success)
-            Text("File copied").font(.system(size: RingLayout.titleSize, weight: .medium))
-            Text(session.sendingGuide == nil ? "Paste into your chat" : "Follow the sending steps")
-              .font(.system(size: RingLayout.tinySize)).foregroundStyle(RingColor.secondary)
-          }
+          Image(systemName: "checkmark").foregroundStyle(RingColor.success)
+          Text("File copied").font(.system(size: RingLayout.titleSize, weight: .medium))
+          Text(session.sendingGuide == nil ? "Paste into your chat" : "Follow the sending steps")
+            .font(.system(size: RingLayout.tinySize)).foregroundStyle(RingColor.secondary)
         }
       }
     }

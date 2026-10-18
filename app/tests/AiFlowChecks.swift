@@ -288,6 +288,47 @@ struct AiFlowChecks {
       "WAV did not preserve the applied decoy and real message")
     print("PASS AI decoy → Hidden mode → passphrase required → WAV → both messages")
 
+    // A custom stealth image must reach the same reading card for either opened message.
+    let cover = NSBitmapImageRep(
+      bitmapDataPlanes: nil, pixelsWide: 256, pixelsHigh: 256, bitsPerSample: 8,
+      samplesPerPixel: 3, hasAlpha: false, isPlanar: false, colorSpaceName: .deviceRGB,
+      bytesPerRow: 256 * 3, bitsPerPixel: 24)!
+    memset(cover.bitmapData!, 128, cover.bytesPerRow * cover.pixelsHigh)
+    let recipient = try backend.identity(algorithm: .mlkem)
+    let custom = try backend.crypto.seal(
+      message: source, recipientPublicKey: recipient.publicKey, decoy: backend.decoy,
+      passphrase: "reading-card-test", algorithm: .mlkem, carrier: .stealthPng,
+      coverImage: cover.representation(using: .png, properties: [:])!)
+    defer { try? FileManager.default.removeItem(at: custom.fileURL) }
+    let customBytes = try Data(contentsOf: custom.fileURL)
+    let reader = try await session(backend, defaults: defaults)
+    var previousID = reader.openedMessageID
+    for passphrase in ["", "reading-card-test", "reading-card-test"] {
+      reader.passphrase = passphrase
+      reader.open(imageData: customBytes)
+      try await waitUntil("Custom stealth image did not open") { !reader.isWorking }
+      try require(
+        reader.screen == .result && reader.resultText == (passphrase.isEmpty ? backend.decoy : source),
+        "Custom stealth image did not produce the expected reading-card text")
+      try require(reader.openedMessageID != previousID, "Reopening did not reset the reading card")
+      previousID = reader.openedMessageID
+    }
+    if CommandLine.arguments.contains("--message-ui") {
+      let preview = FlowPreview(session: reader)
+      defer { preview.close() }
+      try await preview.capture("opened-message")
+      try preview.press("Keep open")
+      try await Task.sleep(for: .seconds(9))
+      try preview.press("Copy text")
+      try await preview.capture("opened-message-kept")
+      try preview.press("Resume timer")
+    }
+    reader.closeResult()
+    try require(
+      reader.resultText == nil && reader.screen == .home && reader.passphrase.isEmpty,
+      "Closing the reading card retained the decrypted result")
+    print("PASS custom stealth image → decoy/secret reading card → reopen → cleanup")
+
     let discarded = try await session(backend, defaults: defaults)
     discarded.requestShortening()
     try await waitUntil("Discard test did not finish") { !discarded.isAiWorking }

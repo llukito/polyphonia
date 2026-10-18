@@ -29,6 +29,8 @@ final class MessageSession: ObservableObject {
   @Published var isWorking = false
   @Published var statusMessage: String?
   @Published private(set) var resultText: String?
+  // Reopening the same text still creates a fresh reading card and timer.
+  @Published private(set) var openedMessageID = UUID()
   @Published private(set) var fileSummary: String?
   @Published private(set) var selectionIssue: SelectionIssue?
   @Published private(set) var sendingGuide: SendingGuide?
@@ -571,6 +573,7 @@ final class MessageSession: ObservableObject {
         case .invitation(let invitation): reviewInvitation(invitation)
         case .message(let opened):
           pendingInvitation = nil
+          openedMessageID = UUID()
           resultText = opened.text
           fileSummary = opened.summary
           passphrase = ""
