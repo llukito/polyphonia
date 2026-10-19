@@ -5,6 +5,9 @@
 Send end-to-end encrypted messages through **every messaging platform**. Powered
 by post-quantum ML-KEM-768 key exchange and end-to-end encryption.
 
+## Demo
+https://youtu.be/SYDRm9h2TzE
+
 ## Build
 
 You need macOS 14 or later, full Xcode, and Rust stable with `rustup` and
